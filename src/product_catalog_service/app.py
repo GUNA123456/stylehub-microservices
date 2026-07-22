@@ -1,12 +1,19 @@
 """
 StyleHub - Product Catalog Service
-Custom Python Microservice for StyleHub E-Commerce
+Custom Python Microservice for StyleHub E-Commerce with gRPC Support
 """
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import os
+import sys
+import concurrent.futures
+import grpc
+
+# Add genproto to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from genproto import stylehub_pb2, stylehub_pb2_grpc
 
 app = FastAPI(
     title="StyleHub Product Catalog Service",
@@ -79,9 +86,60 @@ PRODUCTS_DB = [
     )
 ]
 
+# gRPC Servicer Implementation
+class ProductCatalogServicer(stylehub_pb2_grpc.ProductCatalogServiceServicer):
+    def ListProducts(self, request, context):
+        products = []
+        for p in PRODUCTS_DB:
+            price = stylehub_pb2.Money(currency_code=p.price_usd.currency_code, units=p.price_usd.units, nanos=p.price_usd.nanos)
+            products.append(stylehub_pb2.Product(
+                id=p.id, name=p.name, description=p.description, picture=p.picture, price_usd=price, categories=p.categories
+            ))
+        return stylehub_pb2.ListProductsResponse(products=products)
+
+    def GetProduct(self, request, context):
+        for p in PRODUCTS_DB:
+            if p.id == request.id:
+                price = stylehub_pb2.Money(currency_code=p.price_usd.currency_code, units=p.price_usd.units, nanos=p.price_usd.nanos)
+                return stylehub_pb2.Product(
+                    id=p.id, name=p.name, description=p.description, picture=p.picture, price_usd=price, categories=p.categories
+                )
+        context.set_code(grpc.StatusCode.NOT_FOUND)
+        context.set_details(f"Product {request.id} not found")
+        return stylehub_pb2.Product()
+
+    def SearchProducts(self, request, context):
+        q = request.query.lower()
+        results = []
+        for p in PRODUCTS_DB:
+            if q in p.name.lower() or q in p.description.lower() or any(q in c.lower() for c in p.categories):
+                price = stylehub_pb2.Money(currency_code=p.price_usd.currency_code, units=p.price_usd.units, nanos=p.price_usd.nanos)
+                results.append(stylehub_pb2.Product(
+                    id=p.id, name=p.name, description=p.description, picture=p.picture, price_usd=price, categories=p.categories
+                ))
+        return stylehub_pb2.SearchProductsResponse(results=results)
+
+grpc_server = None
+
+@app.on_event("startup")
+def startup_event():
+    global grpc_server
+    grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
+    stylehub_pb2_grpc.add_ProductCatalogServiceServicer_to_server(ProductCatalogServicer(), grpc_server)
+    grpc_port = int(os.getenv("GRPC_PORT", "50051"))
+    grpc_server.add_insecure_port(f"[::]:{grpc_port}")
+    grpc_server.start()
+    print(f"ProductCatalog gRPC server running on port {grpc_port}")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    global grpc_server
+    if grpc_server:
+        grpc_server.stop(grace=None)
+
 @app.get("/healthz")
 def health_check():
-    return {"status": "ok", "service": "product-catalog-service"}
+    return {"status": "ok", "service": "product-catalog-service", "grpc_port": os.getenv("GRPC_PORT", "50051")}
 
 @app.get("/api/products", response_model=List[Product])
 def list_products():

@@ -4,7 +4,9 @@ syntax = "proto3";
 
 package stylehub;
 
-// Cart Service
+// -------------------------------------------------------------------
+// 1. Cart Service
+// -------------------------------------------------------------------
 service CartService {
     rpc AddItem(AddItemRequest) returns (Empty) {}
     rpc GetCart(GetCartRequest) returns (Cart) {}
@@ -36,7 +38,9 @@ message Cart {
 
 message Empty {}
 
-// Product Catalog Service
+// -------------------------------------------------------------------
+// 2. Product Catalog Service
+// -------------------------------------------------------------------
 service ProductCatalogService {
     rpc ListProducts(Empty) returns (ListProductsResponse) {}
     rpc GetProduct(GetProductRequest) returns (Product) {}
@@ -68,7 +72,9 @@ message SearchProductsResponse {
     repeated Product results = 1;
 }
 
-// Currency Service
+// -------------------------------------------------------------------
+// 3. Currency Service
+// -------------------------------------------------------------------
 service CurrencyService {
     rpc GetSupportedCurrencies(Empty) returns (GetSupportedCurrenciesResponse) {}
     rpc Convert(CurrencyConversionRequest) returns (Money) {}
@@ -87,4 +93,136 @@ message GetSupportedCurrenciesResponse {
 message CurrencyConversionRequest {
     Money from = 1;
     string to_code = 2;
+}
+
+// -------------------------------------------------------------------
+// 4. Ad Service
+// -------------------------------------------------------------------
+service AdService {
+    rpc GetAds(AdRequest) returns (AdResponse) {}
+}
+
+message AdRequest {
+    repeated string context_keys = 1;
+}
+
+message Ad {
+    string redirect_url = 1;
+    string text = 2;
+}
+
+message AdResponse {
+    repeated Ad ads = 1;
+}
+
+// -------------------------------------------------------------------
+// 5. Recommendation Service
+// -------------------------------------------------------------------
+service RecommendationService {
+    rpc ListRecommendations(ListRecommendationsRequest) returns (ListRecommendationsResponse) {}
+}
+
+message ListRecommendationsRequest {
+    string user_id = 1;
+    repeated string product_ids = 2;
+}
+
+message ListRecommendationsResponse {
+    repeated string product_ids = 1;
+}
+
+// -------------------------------------------------------------------
+// 6. Shipping Service
+// -------------------------------------------------------------------
+service ShippingService {
+    rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse) {}
+    rpc ShipOrder(ShipOrderRequest) returns (ShipOrderResponse) {}
+}
+
+message Address {
+    string street_address = 1;
+    string city = 2;
+    string state = 3;
+    string country = 4;
+    int32 zip_code = 5;
+}
+
+message GetQuoteRequest {
+    Address address = 1;
+    repeated CartItem items = 2;
+}
+
+message GetQuoteResponse {
+    Money cost_usd = 1;
+}
+
+message ShipOrderRequest {
+    Address address = 1;
+    repeated CartItem items = 2;
+}
+
+message ShipOrderResponse {
+    string tracking_id = 1;
+}
+
+// -------------------------------------------------------------------
+// 7. Payment Service
+// -------------------------------------------------------------------
+service PaymentService {
+    rpc Charge(ChargeRequest) returns (ChargeResponse) {}
+}
+
+message CreditCardInfo {
+    string credit_card_number = 1;
+    int32 credit_card_cvv = 2;
+    int32 credit_card_expiration_year = 3;
+    int32 credit_card_expiration_month = 4;
+}
+
+message ChargeRequest {
+    Money amount = 1;
+    CreditCardInfo credit_card = 2;
+}
+
+message ChargeResponse {
+    string transaction_id = 1;
+}
+
+// -------------------------------------------------------------------
+// 8. Email Service
+// -------------------------------------------------------------------
+service EmailService {
+    rpc SendOrderConfirmation(SendOrderConfirmationRequest) returns (Empty) {}
+}
+
+message OrderResult {
+    string order_id = 1;
+    string shipping_tracking_id = 2;
+    Money shipping_cost = 3;
+    Address shipping_address = 4;
+    repeated CartItem items = 5;
+}
+
+message SendOrderConfirmationRequest {
+    string email = 1;
+    OrderResult order = 2;
+}
+
+// -------------------------------------------------------------------
+// 9. Checkout Service
+// -------------------------------------------------------------------
+service CheckoutService {
+    rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse) {}
+}
+
+message PlaceOrderRequest {
+    string user_id = 1;
+    string user_currency = 2;
+    Address address = 3;
+    string email = 4;
+    CreditCardInfo credit_card = 5;
+}
+
+message PlaceOrderResponse {
+    OrderResult order = 1;
 }

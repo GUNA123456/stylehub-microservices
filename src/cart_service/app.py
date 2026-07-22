@@ -1,12 +1,15 @@
 """
 StyleHub - Cart Service
-Custom Python Microservice managing user shopping carts with Redis Storage
+Custom Python Microservice managing user shopping carts with Redis Storage and gRPC Support
 """
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict
-import os, json, logging
+import os, json, logging, sys, concurrent.futures, grpc
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from genproto import stylehub_pb2, stylehub_pb2_grpc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CartService")
@@ -66,52 +69,82 @@ def _save_user_cart_items(user_id: str, items: List[dict]):
             logger.error(f"Redis write error: {e}")
     IN_MEMORY_CARTS[user_id] = items
 
+class CartServicer(stylehub_pb2_grpc.CartServiceServicer):
+    def AddItem(self, request, context):
+        user_id = request.user_id
+        item_dict = {"product_id": request.item.product_id, "quantity": request.item.quantity}
+        items = _get_user_cart_items(user_id)
+        found = False
+        for existing in items:
+            if existing["product_id"] == item_dict["product_id"]:
+                existing["quantity"] += item_dict["quantity"]
+                found = True
+                break
+        if not found:
+            items.append(item_dict)
+        _save_user_cart_items(user_id, items)
+        return stylehub_pb2.Empty()
+
+    def GetCart(self, request, context):
+        user_id = request.user_id
+        raw_items = _get_user_cart_items(user_id)
+        pb_items = [stylehub_pb2.CartItem(product_id=i["product_id"], quantity=i["quantity"]) for i in raw_items]
+        return stylehub_pb2.Cart(user_id=user_id, items=pb_items)
+
+    def EmptyCart(self, request, context):
+        user_id = request.user_id
+        _save_user_cart_items(user_id, [])
+        return stylehub_pb2.Empty()
+
+grpc_server = None
+
+@app.on_event("startup")
+def startup_event():
+    global grpc_server
+    grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
+    stylehub_pb2_grpc.add_CartServiceServicer_to_server(CartServicer(), grpc_server)
+    grpc_port = int(os.getenv("GRPC_PORT", "50052"))
+    grpc_server.add_insecure_port(f"[::]:{grpc_port}")
+    grpc_server.start()
+    logger.info(f"CartService gRPC server running on port {grpc_port}")
+
+@app.on_event("shutdown")
+def shutdown_event():
+    global grpc_server
+    if grpc_server:
+        grpc_server.stop(grace=None)
+
 @app.get("/healthz")
 def health_check():
     redis_status = "connected" if redis_client else "in-memory-fallback"
-    return {"status": "ok", "service": "cart-service", "storage": redis_status}
+    return {"status": "ok", "service": "cart-service", "storage": redis_status, "grpc_port": os.getenv("GRPC_PORT", "50052")}
 
 @app.post("/api/cart/items")
 def add_item(request: AddItemRequest):
-    """Add an item to a user's shopping cart in Redis."""
     user_id = request.user_id
     item_dict = request.item.dict()
-
     items = _get_user_cart_items(user_id)
-
-    # Check if product exists in cart, increment quantity
     found = False
     for existing in items:
         if existing["product_id"] == item_dict["product_id"]:
             existing["quantity"] += item_dict["quantity"]
             found = True
             break
-
     if not found:
         items.append(item_dict)
-
     _save_user_cart_items(user_id, items)
-    logger.info(f"🛒 Item added to cart for user {user_id}: {item_dict}")
     return {"status": "success", "user_id": user_id, "cart": items}
 
 @app.get("/api/cart/{user_id}", response_model=Cart)
 def get_cart(user_id: str):
-    """Retrieve all items in a user's cart from Redis."""
     raw_items = _get_user_cart_items(user_id)
-    cart_items = [CartItem(**item) for item in raw_items]
-    return Cart(user_id=user_id, items=cart_items)
+    items = [CartItem(**i) for i in raw_items]
+    return Cart(user_id=user_id, items=items)
 
 @app.delete("/api/cart/{user_id}")
 def empty_cart(user_id: str):
-    """Empty all items from a user's cart in Redis."""
-    if redis_client:
-        try:
-            redis_client.delete(f"cart:{user_id}")
-        except Exception as e:
-            logger.error(f"Redis delete error: {e}")
-    IN_MEMORY_CARTS[user_id] = []
-    logger.info(f"🗑️ Cart cleared for user {user_id}")
-    return {"status": "success", "message": f"Cart cleared for user '{user_id}'"}
+    _save_user_cart_items(user_id, [])
+    return {"status": "success", "message": f"Cart for user '{user_id}' emptied."}
 
 if __name__ == "__main__":
     import uvicorn
