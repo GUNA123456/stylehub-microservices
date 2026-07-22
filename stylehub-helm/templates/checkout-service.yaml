@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-checkout-service
+  labels:
+    app: {{ .Release.Name }}-checkout-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-checkout-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-checkout-service
+    spec:
+      containers:
+        - name: checkout-service
+          image: "{{ .Values.image.repositoryPrefix }}/checkout-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: CART_SERVICE_URL
+              value: "http://{{ .Release.Name }}-cart-service:{{ .Values.microservices.cart.port }}"
+            - name: SHIPPING_SERVICE_URL
+              value: "http://{{ .Release.Name }}-shipping-service:{{ .Values.microservices.shipping.port }}"
+            - name: PAYMENT_SERVICE_URL
+              value: "http://{{ .Release.Name }}-payment-service:{{ .Values.microservices.payment.port }}"
+            - name: EMAIL_SERVICE_URL
+              value: "http://{{ .Release.Name }}-email-service:{{ .Values.microservices.email.port }}"
+            - name: PRODUCT_CATALOG_SERVICE_URL
+              value: "http://{{ .Release.Name }}-product-catalog-service:{{ .Values.microservices.productCatalog.port }}"
+          ports:
+            - containerPort: {{ .Values.microservices.checkout.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-checkout-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-checkout-service
+  ports:
+    - port: {{ .Values.microservices.checkout.port }}
+      targetPort: {{ .Values.microservices.checkout.port }}

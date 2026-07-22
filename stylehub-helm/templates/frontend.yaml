@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    app: {{ .Release.Name }}-frontend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-frontend
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.image.repositoryPrefix }}/frontend:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.frontend.port }}
+          env:
+            - name: PRODUCT_CATALOG_SERVICE_URL
+              value: "http://{{ .Release.Name }}-product-catalog-service:{{ .Values.microservices.productCatalog.port }}"
+            - name: CART_SERVICE_URL
+              value: "http://{{ .Release.Name }}-cart-service:{{ .Values.microservices.cart.port }}"
+            - name: CURRENCY_SERVICE_URL
+              value: "http://{{ .Release.Name }}-currency-service:{{ .Values.microservices.currency.port }}"
+            - name: RECOMMENDATION_SERVICE_URL
+              value: "http://{{ .Release.Name }}-recommendation-service:{{ .Values.microservices.recommendation.port }}"
+            - name: AD_SERVICE_URL
+              value: "http://{{ .Release.Name }}-ad-service:{{ .Values.microservices.ad.port }}"
+            - name: CHECKOUT_SERVICE_URL
+              value: "http://{{ .Release.Name }}-checkout-service:{{ .Values.microservices.checkout.port }}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-frontend
+spec:
+  type: {{ .Values.service.frontendType }}
+  selector:
+    app: {{ .Release.Name }}-frontend
+  ports:
+    - port: 80
+      targetPort: {{ .Values.microservices.frontend.port }}

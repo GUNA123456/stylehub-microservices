@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-recommendation-service
+  labels:
+    app: {{ .Release.Name }}-recommendation-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-recommendation-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-recommendation-service
+    spec:
+      containers:
+        - name: recommendation-service
+          image: "{{ .Values.image.repositoryPrefix }}/recommendation-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.recommendation.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-recommendation-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-recommendation-service
+  ports:
+    - port: {{ .Values.microservices.recommendation.port }}
+      targetPort: {{ .Values.microservices.recommendation.port }}

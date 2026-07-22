@@ -1,0 +1,38 @@
+# Default values for StyleHub Microservices Helm Chart
+
+replicaCount: 1
+
+image:
+  repositoryPrefix: stylehub
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  frontendType: LoadBalancer
+
+redis:
+  image: redis:7-alpine
+  port: 6379
+
+microservices:
+  frontend:
+    port: 8080
+  productCatalog:
+    port: 8081
+  cart:
+    port: 8082
+  currency:
+    port: 8083
+  recommendation:
+    port: 8084
+  ad:
+    port: 8085
+  shipping:
+    port: 8086
+  email:
+    port: 8087
+  payment:
+    port: 8088
+  checkout:
+    port: 8089

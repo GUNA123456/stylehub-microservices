@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-ad-service
+  labels:
+    app: {{ .Release.Name }}-ad-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-ad-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-ad-service
+    spec:
+      containers:
+        - name: ad-service
+          image: "{{ .Values.image.repositoryPrefix }}/ad-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.ad.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-ad-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-ad-service
+  ports:
+    - port: {{ .Values.microservices.ad.port }}
+      targetPort: {{ .Values.microservices.ad.port }}

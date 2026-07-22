@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-product-catalog-service
+  labels:
+    app: {{ .Release.Name }}-product-catalog-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-product-catalog-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-product-catalog-service
+    spec:
+      containers:
+        - name: product-catalog-service
+          image: "{{ .Values.image.repositoryPrefix }}/product-catalog-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.productCatalog.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-product-catalog-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-product-catalog-service
+  ports:
+    - port: {{ .Values.microservices.productCatalog.port }}
+      targetPort: {{ .Values.microservices.productCatalog.port }}

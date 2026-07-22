@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-currency-service
+  labels:
+    app: {{ .Release.Name }}-currency-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-currency-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-currency-service
+    spec:
+      containers:
+        - name: currency-service
+          image: "{{ .Values.image.repositoryPrefix }}/currency-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.currency.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-currency-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-currency-service
+  ports:
+    - port: {{ .Values.microservices.currency.port }}
+      targetPort: {{ .Values.microservices.currency.port }}

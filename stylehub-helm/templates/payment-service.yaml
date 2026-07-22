@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-payment-service
+  labels:
+    app: {{ .Release.Name }}-payment-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-payment-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-payment-service
+    spec:
+      containers:
+        - name: payment-service
+          image: "{{ .Values.image.repositoryPrefix }}/payment-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.payment.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-payment-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-payment-service
+  ports:
+    - port: {{ .Values.microservices.payment.port }}
+      targetPort: {{ .Values.microservices.payment.port }}

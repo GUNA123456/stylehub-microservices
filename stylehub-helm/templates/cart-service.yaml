@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-cart-service
+  labels:
+    app: {{ .Release.Name }}-cart-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-cart-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-cart-service
+    spec:
+      containers:
+        - name: cart-service
+          image: "{{ .Values.image.repositoryPrefix }}/cart-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: REDIS_HOST
+              value: "{{ .Release.Name }}-redis"
+            - name: REDIS_PORT
+              value: "{{ .Values.redis.port }}"
+          ports:
+            - containerPort: {{ .Values.microservices.cart.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cart-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-cart-service
+  ports:
+    - port: {{ .Values.microservices.cart.port }}
+      targetPort: {{ .Values.microservices.cart.port }}

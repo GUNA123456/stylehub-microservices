@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-shipping-service
+  labels:
+    app: {{ .Release.Name }}-shipping-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-shipping-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-shipping-service
+    spec:
+      containers:
+        - name: shipping-service
+          image: "{{ .Values.image.repositoryPrefix }}/shipping-service:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.microservices.shipping.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-shipping-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}-shipping-service
+  ports:
+    - port: {{ .Values.microservices.shipping.port }}
+      targetPort: {{ .Values.microservices.shipping.port }}
