@@ -1,17 +1,18 @@
 """
 StyleHub - Cart Service
-gRPC Microservice managing user shopping carts backed by Redis with item removal & quantity management
+Clean FastAPI Microservice managing user shopping carts backed by Redis
 """
 
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
-import os, json, logging, sys, concurrent.futures, grpc
+from fastapi import FastAPI, Body
+import os, json, logging, sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from genproto import stylehub_pb2, stylehub_pb2_grpc
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common.models import AddItemRequest, UpdateQuantityRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CartService")
+
+app = FastAPI(title="StyleHub Cart Service")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -44,68 +45,52 @@ def _save_cart(user_id: str, items: list):
         except Exception: pass
     IN_MEMORY_CARTS[user_id] = items
 
-class CartServicer(stylehub_pb2_grpc.CartServiceServicer):
-    def AddItem(self, request, context):
-        user_id = request.user_id
-        items = _get_cart(user_id)
-        found = False
-        for i in items:
-            if i["product_id"] == request.item.product_id:
-                i["quantity"] += request.item.quantity
-                found = True
-                break
-        if not found:
-            items.append({"product_id": request.item.product_id, "quantity": request.item.quantity})
-        _save_cart(user_id, items)
-        return stylehub_pb2.Empty()
-
-    def RemoveItem(self, request, context):
-        user_id = request.user_id
-        items = _get_cart(user_id)
-        filtered = [i for i in items if i["product_id"] != request.product_id]
-        _save_cart(user_id, filtered)
-        logger.info(f"🛒 Item {request.product_id} removed from cart for user {user_id}")
-        return stylehub_pb2.Empty()
-
-    def UpdateItemQuantity(self, request, context):
-        user_id = request.user_id
-        items = _get_cart(user_id)
-        if request.quantity <= 0:
-            filtered = [i for i in items if i["product_id"] != request.product_id]
-            _save_cart(user_id, filtered)
-        else:
-            for i in items:
-                if i["product_id"] == request.product_id:
-                    i["quantity"] = request.quantity
-                    break
-            _save_cart(user_id, items)
-        return stylehub_pb2.Empty()
-
-    def GetCart(self, request, context):
-        items = _get_cart(request.user_id)
-        pb_items = [stylehub_pb2.CartItem(product_id=i["product_id"], quantity=i["quantity"]) for i in items]
-        return stylehub_pb2.Cart(user_id=request.user_id, items=pb_items)
-
-    def EmptyCart(self, request, context):
-        _save_cart(request.user_id, [])
-        return stylehub_pb2.Empty()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
-    stylehub_pb2_grpc.add_CartServiceServicer_to_server(CartServicer(), grpc_server)
-    grpc_port = int(os.getenv("GRPC_PORT", "50052"))
-    grpc_server.add_insecure_port(f"[::]:{grpc_port}")
-    grpc_server.start()
-    logger.info(f"⚡ CartService gRPC active on port {grpc_port}")
-    yield
-    grpc_server.stop(grace=None)
-
-app = FastAPI(title="StyleHub Cart Service", lifespan=lifespan)
-
 @app.get("/healthz")
-def health_check():
-    return {"status": "ok", "service": "cart-service", "storage": "redis" if redis_client else "in-memory"}
+def health(): return {"status": "ok", "service": "cart-service", "storage": "redis" if redis_client else "in-memory"}
+
+@app.get("/api/cart/{user_id}")
+def get_cart(user_id: str):
+    items = _get_cart(user_id)
+    return {"user_id": user_id, "items": items}
+
+@app.post("/api/cart/add")
+def add_item(req: AddItemRequest):
+    items = _get_cart(req.user_id)
+    found = False
+    for i in items:
+        if i["product_id"] == req.item.product_id:
+            i["quantity"] += req.item.quantity
+            found = True
+            break
+    if not found:
+        items.append({"product_id": req.item.product_id, "quantity": req.item.quantity})
+    _save_cart(req.user_id, items)
+    return {"status": "success"}
+
+@app.post("/api/cart/update-quantity")
+def update_quantity(req: UpdateQuantityRequest):
+    items = _get_cart(req.user_id)
+    if req.quantity <= 0:
+        items = [i for i in items if i["product_id"] != req.product_id]
+    else:
+        for i in items:
+            if i["product_id"] == req.product_id:
+                i["quantity"] = req.quantity
+                break
+    _save_cart(req.user_id, items)
+    return {"status": "success"}
+
+@app.delete("/api/cart/{user_id}/item/{product_id}")
+def remove_item(user_id: str, product_id: str):
+    items = _get_cart(user_id)
+    filtered = [i for i in items if i["product_id"] != product_id]
+    _save_cart(user_id, filtered)
+    return {"status": "success"}
+
+@app.delete("/api/cart/{user_id}")
+def empty_cart(user_id: str):
+    _save_cart(user_id, [])
+    return {"status": "success"}
 
 if __name__ == "__main__":
     import uvicorn

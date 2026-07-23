@@ -1,30 +1,29 @@
 """
 StyleHub - Storefront Web App Gateway
-Python FastAPI Storefront communicating with backend microservices via native gRPC.
-Features Search, Category Filters, Product Details + Quantity Selector, gRPC Recommendations,
-Cart Item Removal, Quantity Increments/Decrements, Shipping & Payment Checkout Forms.
+Clean FastAPI Storefront app communicating with microservices via HTTP REST APIs.
+Features: Search, Category Filters, Product Details + Quantity Selector, Recommendations,
+Cart Item Removal, Quantity Adjustments, Shipping & Payment Checkout Forms.
 """
 
 from fastapi import FastAPI, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-import os, sys, logging, grpc
+import os, sys, logging, requests
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from genproto import stylehub_pb2, stylehub_pb2_grpc
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Frontend")
 
 app = FastAPI(title="StyleHub Storefront")
 
-# gRPC Microservice Addresses
-PRODUCT_CATALOG_GRPC = os.getenv("PRODUCT_CATALOG_GRPC_ADDR", "localhost:50051")
-CART_GRPC = os.getenv("CART_GRPC_ADDR", "localhost:50052")
-CURRENCY_GRPC = os.getenv("CURRENCY_GRPC_ADDR", "localhost:50053")
-RECOMMENDATION_GRPC = os.getenv("RECOMMENDATION_GRPC_ADDR", "localhost:50054")
-SHIPPING_GRPC = os.getenv("SHIPPING_GRPC_ADDR", "localhost:50055")
-CHECKOUT_GRPC = os.getenv("CHECKOUT_GRPC_ADDR", "localhost:50056")
-AD_GRPC = os.getenv("AD_GRPC_ADDR", "localhost:50057")
+# Microservice Endpoints
+PRODUCT_CATALOG_URL = os.getenv("PRODUCT_CATALOG_URL", "http://localhost:8081")
+CART_URL = os.getenv("CART_URL", "http://localhost:8082")
+CURRENCY_URL = os.getenv("CURRENCY_URL", "http://localhost:8083")
+RECOMMENDATION_URL = os.getenv("RECOMMENDATION_URL", "http://localhost:8084")
+SHIPPING_URL = os.getenv("SHIPPING_URL", "http://localhost:8085")
+CHECKOUT_URL = os.getenv("CHECKOUT_URL", "http://localhost:8086")
+AD_URL = os.getenv("AD_URL", "http://localhost:8087")
 
 TOP_TICKER = """
 <div style="background: linear-gradient(90deg, #ea580c, #f97316); color: white; text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
@@ -34,7 +33,7 @@ TOP_TICKER = """
 
 FOOTER_HTML = """
 <footer style="background:#f8fafc; color:#64748b; text-align:center; padding:2.5rem 1rem; margin-top:4rem; border-top:1px solid #e2e8f0; font-size:0.9rem;">
-    <p>© 2026 StyleHub Microservices | Built with gRPC, Python FastAPI, Docker & Kubernetes</p>
+    <p>© 2026 StyleHub Microservices | Built with Python FastAPI, Docker & Kubernetes</p>
 </footer>
 """
 
@@ -112,47 +111,30 @@ HTML_LAYOUT = """
 </html>
 """
 
-# -------------------------------------------------------------------
-# gRPC Helper Functions
-# -------------------------------------------------------------------
-
+# Helper Functions
 def _get_cart_items(user_id: str = "user-demo-123") -> list:
     try:
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        cart = stub.GetCart(stylehub_pb2.GetCartRequest(user_id=user_id), timeout=2)
-        return cart.items
-    except Exception:
-        return []
+        res = requests.get(f"{CART_URL}/api/cart/{user_id}", timeout=2).json()
+        return res.get("items", [])
+    except Exception: return []
 
 def _get_cart_count(user_id: str = "user-demo-123") -> int:
-    return sum(item.quantity for item in _get_cart_items(user_id))
+    return sum(item.get("quantity", 1) for item in _get_cart_items(user_id))
 
 def _get_ads(category: str = "clothing") -> str:
     try:
-        stub = stylehub_pb2_grpc.AdServiceStub(grpc.insecure_channel(AD_GRPC))
-        res = stub.GetAds(stylehub_pb2.AdRequest(context_keys=[category]), timeout=2)
-        if res.ads:
-            return f'<div class="ad-banner">📢 {res.ads[0].text}</div>'
-    except Exception:
-        pass
+        res = requests.post(f"{AD_URL}/api/ads", json=[category], timeout=2).json()
+        ads = res.get("ads", [])
+        if ads: return f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
+    except Exception: pass
     return ""
 
 def _convert_price(units: int, nanos: int, to_code: str) -> str:
-    if to_code == "USD":
-        return f"${units}.00 USD"
+    if to_code == "USD": return f"${units}.00 USD"
     try:
-        stub = stylehub_pb2_grpc.CurrencyServiceStub(grpc.insecure_channel(CURRENCY_GRPC))
-        res = stub.Convert(stylehub_pb2.CurrencyConversionRequest(
-            from_money=stylehub_pb2.Money(currency_code="USD", units=units, nanos=nanos),
-            to_code=to_code
-        ), timeout=2)
-        return f"{res.units} {to_code}"
-    except Exception:
-        return f"${units}.00 USD"
-
-# -------------------------------------------------------------------
-# Application Routes
-# -------------------------------------------------------------------
+        res = requests.post(f"{CURRENCY_URL}/api/currency/convert", params={"from_code": "USD", "to_code": to_code, "units": units, "nanos": nanos}, timeout=2).json()
+        return f"{res['units']} {to_code}"
+    except Exception: return f"${units}.00 USD"
 
 @app.post("/set-currency")
 def set_currency(currency_code: str = Form(...)):
@@ -167,27 +149,17 @@ def index_page(request: Request, q: str = "", category: str = "all"):
     ad_html = _get_ads(category if category != "all" else "clothing")
 
     try:
-        stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
         if q:
-            res = stub.SearchProducts(stylehub_pb2.SearchProductsRequest(query=q), timeout=2)
-            products = res.results
+            res = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/search", params={"q": q}, timeout=2).json()
+            products = res.get("products", [])
         else:
-            res = stub.ListProducts(stylehub_pb2.Empty(), timeout=2)
-            products = res.products
+            res = requests.get(f"{PRODUCT_CATALOG_URL}/api/products", timeout=2).json()
+            products = res.get("products", [])
             if category != "all":
-                products = [p for p in products if category.lower() in [c.lower() for c in p.categories]]
+                products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
     except Exception as e:
-        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable via gRPC ({PRODUCT_CATALOG_GRPC})</h2><p>{e}</p>'
-        return HTML_LAYOUT.format(
-            title="Error", content=content, ad_banner="", cart_count=cart_count, search_query=q,
-            top_ticker=TOP_TICKER, footer=FOOTER_HTML,
-            usd_sel="selected" if user_currency=="USD" else "",
-            eur_sel="selected" if user_currency=="EUR" else "",
-            gbp_sel="selected" if user_currency=="GBP" else "",
-            jpy_sel="selected" if user_currency=="JPY" else "",
-            cad_sel="selected" if user_currency=="CAD" else "",
-            inr_sel="selected" if user_currency=="INR" else ""
-        )
+        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{e}</p>'
+        return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, search_query=q, top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
     cat_bar = f"""
     <div class="cat-bar">
@@ -200,20 +172,21 @@ def index_page(request: Request, q: str = "", category: str = "all"):
 
     cards = ""
     for p in products:
-        price_str = _convert_price(p.price_usd.units, p.price_usd.nanos, user_currency)
+        p_price = p.get("price_usd", {"units": 50, "nanos": 0})
+        price_str = _convert_price(p_price["units"], p_price["nanos"], user_currency)
         cards += f"""
         <div class="card">
             <div>
-                <span class="sku-tag">SKU #{p.id}</span>
-                <h3 style="font-size:1.15rem; font-weight:700; margin-top:0.2rem;"><a href="/product/{p.id}" style="text-decoration:none; color:#0f172a;">{p.name}</a></h3>
-                <p style="color:#64748b; font-size:0.875rem; margin-top:0.4rem; line-height:1.4;">{p.description}</p>
+                <span class="sku-tag">SKU #{p['id']}</span>
+                <h3 style="font-size:1.15rem; font-weight:700; margin-top:0.2rem;"><a href="/product/{p['id']}" style="text-decoration:none; color:#0f172a;">{p['name']}</a></h3>
+                <p style="color:#64748b; font-size:0.875rem; margin-top:0.4rem; line-height:1.4;">{p['description']}</p>
             </div>
             <div style="margin-top:1.25rem;">
                 <div style="font-size:1.25rem; font-weight:800; color:#ea580c;">{price_str}</div>
                 <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
-                    <a href="/product/{p.id}" class="btn btn-outline" style="flex:1; font-size:0.85rem; padding:0.5rem;">Details</a>
+                    <a href="/product/{p['id']}" class="btn btn-outline" style="flex:1; font-size:0.85rem; padding:0.5rem;">Details</a>
                     <form action="/add-to-cart" method="post" style="flex:1; margin:0;">
-                        <input type="hidden" name="product_id" value="{p.id}">
+                        <input type="hidden" name="product_id" value="{p['id']}">
                         <input type="hidden" name="quantity" value="1">
                         <button type="submit" class="btn" style="width:100%; font-size:0.85rem; padding:0.5rem;">Add to Cart</button>
                     </form>
@@ -247,28 +220,28 @@ def product_detail_page(product_id: str, request: Request):
     cart_count = _get_cart_count()
 
     try:
-        stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
-        product = stub.GetProduct(stylehub_pb2.GetProductRequest(id=product_id), timeout=2)
+        product = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{product_id}", timeout=2).json()
     except Exception:
         return HTML_LAYOUT.format(title="Not Found", content="<h2>Product Not Found</h2>", ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
-    price_str = _convert_price(product.price_usd.units, product.price_usd.nanos, user_currency)
+    p_price = product.get("price_usd", {"units": 50, "nanos": 0})
+    price_str = _convert_price(p_price["units"], p_price["nanos"], user_currency)
 
     # Recommendations
     recommended_cards = ""
     try:
-        rec_stub = stylehub_pb2_grpc.RecommendationServiceStub(grpc.insecure_channel(RECOMMENDATION_GRPC))
-        rec_res = rec_stub.ListRecommendations(stylehub_pb2.ListRecommendationsRequest(user_id="user-demo-123", product_ids=[product_id]), timeout=2)
-        for r_id in rec_res.product_ids:
+        rec_res = requests.post(f"{RECOMMENDATION_URL}/api/recommendations", params={"user_id": "user-demo-123"}, json=[product_id], timeout=2).json()
+        for r_id in rec_res.get("product_ids", []):
             try:
-                rp = stub.GetProduct(stylehub_pb2.GetProductRequest(id=r_id), timeout=2)
-                r_price = _convert_price(rp.price_usd.units, rp.price_usd.nanos, user_currency)
+                rp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{r_id}", timeout=2).json()
+                rp_price = rp.get("price_usd", {"units": 50, "nanos": 0})
+                r_price = _convert_price(rp_price["units"], rp_price["nanos"], user_currency)
                 recommended_cards += f"""
                 <div class="card" style="padding:1rem;">
-                    <span class="sku-tag">SKU #{rp.id}</span>
-                    <h4 style="font-size:1rem; font-weight:700;"><a href="/product/{rp.id}" style="color:#0f172a; text-decoration:none;">{rp.name}</a></h4>
+                    <span class="sku-tag">SKU #{rp['id']}</span>
+                    <h4 style="font-size:1rem; font-weight:700;"><a href="/product/{rp['id']}" style="color:#0f172a; text-decoration:none;">{rp['name']}</a></h4>
                     <div style="font-weight:800; color:#ea580c; margin-top:0.5rem;">{r_price}</div>
-                    <a href="/product/{rp.id}" class="btn btn-outline" style="margin-top:0.75rem; font-size:0.8rem; padding:0.4rem;">View Details</a>
+                    <a href="/product/{rp['id']}" class="btn btn-outline" style="margin-top:0.75rem; font-size:0.8rem; padding:0.4rem;">View Details</a>
                 </div>
                 """
             except Exception: pass
@@ -280,13 +253,13 @@ def product_detail_page(product_id: str, request: Request):
             <div style="font-size:4rem;">👕</div>
         </div>
         <div>
-            <span class="sku-tag">SKU #{product.id}</span>
-            <h1 style="font-size:2.2rem; font-weight:800; color:#0f172a; margin-top:0.25rem;">{product.name}</h1>
+            <span class="sku-tag">SKU #{product['id']}</span>
+            <h1 style="font-size:2.2rem; font-weight:800; color:#0f172a; margin-top:0.25rem;">{product['name']}</h1>
             <div style="font-size:1.8rem; font-weight:800; color:#ea580c; margin:1rem 0;">{price_str}</div>
-            <p style="color:#475569; line-height:1.6; font-size:1rem; margin-bottom:1.5rem;">{product.description}</p>
+            <p style="color:#475569; line-height:1.6; font-size:1rem; margin-bottom:1.5rem;">{product['description']}</p>
             
             <form action="/add-to-cart" method="post">
-                <input type="hidden" name="product_id" value="{product.id}">
+                <input type="hidden" name="product_id" value="{product['id']}">
                 <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem;">
                     <label style="font-weight:700; font-size:0.9rem;">Quantity:</label>
                     <select name="quantity" style="padding:0.5rem 1rem; border-radius:0.5rem; font-weight:700; border:1px solid #cbd5e1;">
@@ -303,13 +276,13 @@ def product_detail_page(product_id: str, request: Request):
     </div>
 
     <div style="margin-top:3rem;">
-        <h3 style="font-size:1.4rem; font-weight:800; margin-bottom:1rem;">✨ You May Also Like (via gRPC RecommendationService)</h3>
+        <h3 style="font-size:1.4rem; font-weight:800; margin-bottom:1rem;">✨ You May Also Like</h3>
         <div class="product-grid" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">{recommended_cards}</div>
     </div>
     """
 
     return HTML_LAYOUT.format(
-        title=product.name, ad_banner="", content=content, cart_count=cart_count, search_query="",
+        title=product['name'], ad_banner="", content=content, cart_count=cart_count, search_query="",
         top_ticker=TOP_TICKER, footer=FOOTER_HTML,
         usd_sel="selected" if user_currency=="USD" else "",
         eur_sel="selected" if user_currency=="EUR" else "",
@@ -322,19 +295,17 @@ def product_detail_page(product_id: str, request: Request):
 @app.post("/add-to-cart")
 def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: str = "user-demo-123"):
     try:
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        stub.AddItem(stylehub_pb2.AddItemRequest(user_id=user_id, item=stylehub_pb2.CartItem(product_id=product_id, quantity=quantity)), timeout=2)
+        requests.post(f"{CART_URL}/api/cart/add", json={"user_id": user_id, "item": {"product_id": product_id, "quantity": quantity}}, timeout=2)
     except Exception as e:
-        logger.error(f"gRPC Cart AddItem error: {e}")
+        logger.error(f"Cart add error: {e}")
     return RedirectResponse(url="/cart", status_code=303)
 
 @app.post("/cart/remove-item")
 def remove_cart_item(product_id: str = Form(...), user_id: str = "user-demo-123"):
     try:
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        stub.RemoveItem(stylehub_pb2.RemoveItemRequest(user_id=user_id, product_id=product_id), timeout=2)
+        requests.delete(f"{CART_URL}/api/cart/{user_id}/item/{product_id}", timeout=2)
     except Exception as e:
-        logger.error(f"gRPC Cart RemoveItem error: {e}")
+        logger.error(f"Cart remove error: {e}")
     return RedirectResponse(url="/cart", status_code=303)
 
 @app.post("/cart/update-quantity")
@@ -343,37 +314,37 @@ def update_cart_quantity(product_id: str = Form(...), action: str = Form(...), u
         cart_items = _get_cart_items(user_id)
         current_qty = 1
         for item in cart_items:
-            if item.product_id == product_id:
-                current_qty = item.quantity
+            if item.get("product_id") == product_id:
+                current_qty = item.get("quantity", 1)
                 break
         
         new_qty = current_qty + 1 if action == "increase" else current_qty - 1
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        stub.UpdateItemQuantity(stylehub_pb2.UpdateItemQuantityRequest(user_id=user_id, product_id=product_id, quantity=new_qty), timeout=2)
+        requests.post(f"{CART_URL}/api/cart/update-quantity", json={"user_id": user_id, "product_id": product_id, "quantity": new_qty}, timeout=2)
     except Exception as e:
-        logger.error(f"gRPC Cart UpdateItemQuantity error: {e}")
+        logger.error(f"Cart update quantity error: {e}")
     return RedirectResponse(url="/cart", status_code=303)
 
 @app.get("/cart", response_class=HTMLResponse)
 def view_cart(request: Request, user_id: str = "user-demo-123"):
     user_currency = request.cookies.get("user_currency", "USD")
     cart_items = _get_cart_items(user_id)
-    cart_count = sum(i.quantity for i in cart_items)
+    cart_count = sum(i.get("quantity", 1) for i in cart_items)
 
     if not cart_items:
         content = '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Shopping Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
     else:
         rows, subtotal_usd = "", 0
-        pc_stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
-        
         for item in cart_items:
-            p_name, p_price, p_sku = item.product_id, 50, item.product_id
+            p_sku = item.get("product_id")
+            p_qty = item.get("quantity", 1)
+            p_name, p_price = p_sku, 50
             try:
-                p = pc_stub.GetProduct(stylehub_pb2.GetProductRequest(id=item.product_id), timeout=2)
-                p_name, p_price, p_sku = p.name, p.price_usd.units, p.id
+                p = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{p_sku}", timeout=2).json()
+                p_name = p.get("name", p_sku)
+                p_price = p.get("price_usd", {}).get("units", 50)
             except Exception: pass
             
-            item_total = p_price * item.quantity
+            item_total = p_price * p_qty
             subtotal_usd += item_total
             price_formatted = _convert_price(p_price, 0, user_currency)
             subtotal_formatted = _convert_price(item_total, 0, user_currency)
@@ -392,7 +363,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                             <input type="hidden" name="action" value="decrease">
                             <button type="submit" class="qty-btn">-</button>
                         </form>
-                        <span style="font-weight:700; min-width:24px; text-align:center;">{item.quantity}</span>
+                        <span style="font-weight:700; min-width:24px; text-align:center;">{p_qty}</span>
                         <form action="/cart/update-quantity" method="post" style="margin:0;">
                             <input type="hidden" name="product_id" value="{p_sku}">
                             <input type="hidden" name="action" value="increase">
@@ -410,12 +381,12 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
             </tr>
             """
 
-        # Dynamic Shipping Quote via gRPC
+        # Dynamic Shipping Quote
         shipping_usd = 12.00
         try:
-            ship_stub = stylehub_pb2_grpc.ShippingServiceStub(grpc.insecure_channel(SHIPPING_GRPC))
-            quote = ship_stub.GetQuote(stylehub_pb2.GetQuoteRequest(items=cart_items), timeout=2)
-            shipping_usd = quote.cost_usd.units + (quote.cost_usd.nanos / 1e9)
+            quote = requests.post(f"{SHIPPING_URL}/api/shipping/quote", json=cart_items, timeout=2).json()
+            cost_info = quote.get("cost_usd", {})
+            shipping_usd = cost_info.get("units", 12) + (cost_info.get("nanos", 0) / 1e9)
         except Exception: pass
 
         total_usd = int(subtotal_usd + shipping_usd)
@@ -488,7 +459,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                             <span>{_convert_price(subtotal_usd, 0, user_currency)}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.5rem;">
-                            <span style="color:#64748b;">Shipping (gRPC):</span>
+                            <span style="color:#64748b;">Shipping:</span>
                             <span>{shipping_formatted}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:1.25rem; font-weight:800; color:#ea580c; border-top:1px solid #cbd5e1; padding-top:0.5rem;">
@@ -517,8 +488,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
 @app.post("/empty-cart")
 def empty_cart(user_id: str = "user-demo-123"):
     try:
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        stub.EmptyCart(stylehub_pb2.EmptyCartRequest(user_id=user_id), timeout=2)
+        requests.delete(f"{CART_URL}/api/cart/{user_id}", timeout=2)
     except Exception: pass
     return RedirectResponse(url="/cart", status_code=303)
 
@@ -540,24 +510,24 @@ def checkout(
     order_id, tracking_id = "ORD-SH-SUCCESS", "SH-TRK-98765"
     
     try:
-        stub = stylehub_pb2_grpc.CheckoutServiceStub(grpc.insecure_channel(CHECKOUT_GRPC))
-        res = stub.PlaceOrder(stylehub_pb2.PlaceOrderRequest(
-            user_id=user_id,
-            user_currency=user_currency,
-            email=email,
-            address=stylehub_pb2.Address(street_address=street_address, city=city, state=state, country="United States", zip_code=zip_code),
-            credit_card=stylehub_pb2.CreditCardInfo(credit_card_number=credit_card_number, credit_card_cvv=cvv, credit_card_expiration_year=exp_year, credit_card_expiration_month=exp_month)
-        ), timeout=5)
-        order_id = res.order.order_id
-        tracking_id = res.order.shipping_tracking_id
+        res = requests.post(f"{CHECKOUT_URL}/api/checkout", json={
+            "user_id": user_id,
+            "user_currency": user_currency,
+            "email": email,
+            "address": {"street_address": street_address, "city": city, "state": state, "country": "United States", "zip_code": zip_code},
+            "credit_card": {"credit_card_number": credit_card_number, "credit_card_cvv": cvv, "credit_card_expiration_year": exp_year, "credit_card_expiration_month": exp_month}
+        }, timeout=5).json()
+        order_info = res.get("order", {})
+        order_id = order_info.get("order_id", order_id)
+        tracking_id = order_info.get("shipping_tracking_id", tracking_id)
     except Exception as e:
-        logger.error(f"gRPC Checkout error: {e}")
+        logger.error(f"Checkout error: {e}")
 
     content = f"""
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:0.75rem; padding:2.5rem; max-width:650px; margin:2rem auto; text-align:center;">
         <div style="font-size:3.5rem;">🎉</div>
         <h1 style="color:#166534; font-weight:800; font-size:2rem; margin-top:0.5rem;">Order Placed Successfully!</h1>
-        <p style="color:#15803d; margin-top:0.4rem;">Your order has been processed across our gRPC microservices mesh.</p>
+        <p style="color:#15803d; margin-top:0.4rem;">Your order has been processed across our microservices mesh.</p>
         
         <div style="background:white; border:1px solid #dcfce7; border-radius:0.5rem; padding:1.5rem; margin-top:1.5rem; text-align:left; line-height:1.6;">
             <p><strong>Order ID:</strong> <span style="font-family:monospace; color:#166534;">{order_id}</span></p>

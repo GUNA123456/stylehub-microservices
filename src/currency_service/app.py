@@ -1,49 +1,35 @@
 """
 StyleHub - Currency Service
-gRPC Microservice for multi-currency conversion
+Clean FastAPI Microservice for multi-currency conversion
 """
 
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
-import os, sys, concurrent.futures, grpc
+from fastapi import FastAPI, HTTPException
+import os
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from genproto import stylehub_pb2, stylehub_pb2_grpc
+app = FastAPI(title="StyleHub Currency Service")
 
 EXCHANGE_RATES = {"USD": 1.0, "EUR": 0.92, "GBP": 0.78, "JPY": 155.0, "CAD": 1.36, "INR": 83.5}
 
-class CurrencyServicer(stylehub_pb2_grpc.CurrencyServiceServicer):
-    def GetSupportedCurrencies(self, request, context):
-        return stylehub_pb2.GetSupportedCurrenciesResponse(currency_codes=list(EXCHANGE_RATES.keys()))
-
-    def Convert(self, request, context):
-        from_code, to_code = request.from_money.currency_code.upper(), request.to_code.upper()
-        if from_code not in EXCHANGE_RATES or to_code not in EXCHANGE_RATES:
-            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
-            return stylehub_pb2.Money()
-
-        usd = (request.from_money.units + request.from_money.nanos / 1e9) / EXCHANGE_RATES[from_code]
-        converted = usd * EXCHANGE_RATES[to_code]
-        units = int(converted)
-        nanos = int((converted - units) * 1e9)
-        return stylehub_pb2.Money(currency_code=to_code, units=units, nanos=nanos)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
-    stylehub_pb2_grpc.add_CurrencyServiceServicer_to_server(CurrencyServicer(), grpc_server)
-    grpc_port = int(os.getenv("GRPC_PORT", "50053"))
-    grpc_server.add_insecure_port(f"[::]:{grpc_port}")
-    grpc_server.start()
-    print(f"⚡ CurrencyService gRPC active on port {grpc_port}")
-    yield
-    grpc_server.stop(grace=None)
-
-app = FastAPI(title="StyleHub Currency Service", lifespan=lifespan)
-
 @app.get("/healthz")
-def health_check():
-    return {"status": "ok", "service": "currency-service"}
+def health(): return {"status": "ok", "service": "currency-service"}
+
+@app.get("/api/currency/supported")
+def get_supported_currencies():
+    return {"currencies": list(EXCHANGE_RATES.keys())}
+
+@app.post("/api/currency/convert")
+def convert_currency(from_code: str, to_code: str, units: int, nanos: int = 0):
+    from_c, to_c = from_code.upper(), to_code.upper()
+    if from_c not in EXCHANGE_RATES or to_c not in EXCHANGE_RATES:
+        raise HTTPException(status_code=400, detail="Unsupported currency")
+    
+    usd_val = (units + nanos / 1e9) / EXCHANGE_RATES[from_c]
+    converted = usd_val * EXCHANGE_RATES[to_c]
+    return {
+        "currency_code": to_c,
+        "units": int(converted),
+        "nanos": int((converted - int(converted)) * 1e9)
+    }
 
 if __name__ == "__main__":
     import uvicorn
