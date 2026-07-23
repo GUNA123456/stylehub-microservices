@@ -226,7 +226,6 @@ def index_page(request: Request, q: str = "", category: str = "all"):
     {cat_bar}
     <div style="margin-top: 1.5rem;">
         <h1 style="font-size:1.8rem; font-weight:800;">StyleHub Fashion Catalog</h1>
-        <p style="color:#64748b; margin-top:0.25rem;">High-performance microservices storefront powered by gRPC over HTTP/2.</p>
     </div>
     <div class="product-grid">{cards}</div>
     """
