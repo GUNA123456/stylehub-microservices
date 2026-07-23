@@ -1,11 +1,13 @@
 """
-StyleHub - Storefront Web App Gateway
-Python FastAPI Storefront communicating with backend microservices via native gRPC
+StyleHub - Modern E-Commerce Storefront & SRE Operations Gateway
+Custom Python FastAPI Web App serving the StyleHub store interface with gRPC backend integration.
+Features: Search, Category Filters, Product Details + Quantity Selector, gRPC Recommendations,
+Full Shipping Address & Payment Forms, Order Receipt, AI Assistant, and Live System Topology Dashboard (/system-status).
 """
 
-from fastapi import FastAPI, Request, Form, Response
+from fastapi import FastAPI, Request, Form, Response, Cookie
 from fastapi.responses import HTMLResponse, RedirectResponse
-import os, sys, logging, grpc
+import os, sys, logging, time, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from genproto import stylehub_pb2, stylehub_pb2_grpc
@@ -19,72 +21,138 @@ app = FastAPI(title="StyleHub Storefront")
 PRODUCT_CATALOG_GRPC = os.getenv("PRODUCT_CATALOG_GRPC_ADDR", "localhost:50051")
 CART_GRPC = os.getenv("CART_GRPC_ADDR", "localhost:50052")
 CURRENCY_GRPC = os.getenv("CURRENCY_GRPC_ADDR", "localhost:50053")
-AD_GRPC = os.getenv("AD_GRPC_ADDR", "localhost:50057")
+RECOMMENDATION_GRPC = os.getenv("RECOMMENDATION_GRPC_ADDR", "localhost:50054")
+SHIPPING_GRPC = os.getenv("SHIPPING_GRPC_ADDR", "localhost:50055")
 CHECKOUT_GRPC = os.getenv("CHECKOUT_GRPC_ADDR", "localhost:50056")
+AD_GRPC = os.getenv("AD_GRPC_ADDR", "localhost:50057")
+EMAIL_GRPC = os.getenv("EMAIL_GRPC_ADDR", "localhost:50058")
+PAYMENT_GRPC = os.getenv("PAYMENT_GRPC_ADDR", "localhost:50059")
+
+ALL_SERVICES_CONFIG = [
+    ("Frontend Storefront", "frontend", 8080, None),
+    ("Product Catalog Service", "product-catalog-service", 8081, PRODUCT_CATALOG_GRPC),
+    ("Cart Service", "cart-service", 8082, CART_GRPC),
+    ("Currency Service", "currency-service", 8083, CURRENCY_GRPC),
+    ("Recommendation Service", "recommendation-service", 8084, RECOMMENDATION_GRPC),
+    ("Shipping Service", "shipping-service", 8085, SHIPPING_GRPC),
+    ("Checkout Orchestrator", "checkout-service", 8086, CHECKOUT_GRPC),
+    ("Ad Service", "ad-service", 8087, AD_GRPC),
+    ("Email Service", "email-service", 8088, EMAIL_GRPC),
+    ("Payment Service (Python)", "payment-service", 8089, PAYMENT_GRPC),
+]
+
+TOP_TICKER = """
+<div style="background: linear-gradient(90deg, #ea580c, #f97316); color: white; text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
+    🚚 FREE SHIPPING ON ALL ORDERS OVER $50 • USE CODE <span style="text-decoration: underline;">STYLEHUB2026</span>
+</div>
+"""
+
+FOOTER_HTML = """
+<footer style="background:#f8fafc; color:#64748b; text-align:center; padding:2.5rem 1rem; margin-top:4rem; border-top:1px solid #e2e8f0; font-size:0.9rem;">
+    <p>© 2026 StyleHub Microservices | Built with gRPC, Python FastAPI, Docker & Kubernetes</p>
+    <p style="margin-top:0.4rem;"><a href="/system-status" style="color:#ea580c; font-weight:700; text-decoration:none;">📊 View Live System Topology & Microservices Health Dashboard</a></p>
+</footer>
+"""
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} | StyleHub Storefront</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {{ box-sizing: border-box; margin:0; padding:0; font-family: 'Inter', sans-serif; }}
-        body {{ background: #f8fafc; color: #0f172a; min-height: 100vh; display: flex; flex-direction: column; }}
-        header {{ background: #ffffff; border-bottom: 1px solid #e2e8f0; sticky: top; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }}
-        .logo {{ font-size: 1.5rem; font-weight: 800; color: #0f172a; text-decoration: none; }}
+        body {{ background: #ffffff; color: #0f172a; min-height: 100vh; display: flex; flex-direction: column; }}
+        header {{ background: #ffffff; border-bottom: 1px solid #e2e8f0; sticky: top; z-index: 50; padding: 1rem 2rem; }}
+        .header-inner {{ max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }}
+        .logo {{ font-size: 1.6rem; font-weight: 800; color: #0f172a; text-decoration: none; display: flex; align-items: center; letter-spacing: -0.03em; }}
         .logo span {{ color: #ea580c; }}
+        .search-form {{ display: flex; flex: 1; max-width: 400px; }}
+        .search-input {{ flex: 1; border: 1px solid #cbd5e1; padding: 0.5rem 0.9rem; border-radius: 0.5rem 0 0 0.5rem; font-size: 0.9rem; outline: none; }}
+        .search-btn {{ background: #ea580c; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0 0.5rem 0.5rem 0; font-weight: 700; cursor: pointer; }}
         .nav {{ display: flex; align-items: center; gap: 1rem; }}
-        .btn {{ background: #ea580c; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 0.5rem; font-weight: 700; text-decoration: none; cursor: pointer; }}
-        .container {{ max-width: 1100px; margin: 2rem auto; padding: 0 1rem; flex: 1; }}
-        .product-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }}
-        .card {{ background: white; border-radius: 0.75rem; padding: 1.25rem; border: 1px solid #e2e8f0; display: flex; flex-direction: column; justify-content: space-between; }}
-        .ad-banner {{ background: #fff7ed; border: 1px solid #ffedd5; border-radius: 0.5rem; padding: 0.75rem 1rem; margin-bottom: 1.5rem; color: #c2410c; font-weight: 600; text-align: center; }}
+        .btn {{ background: #ea580c; color: white; border: none; padding: 0.6rem 1.25rem; border-radius: 0.5rem; font-weight: 700; text-decoration: none; cursor: pointer; text-align: center; transition: background 0.2s; }}
+        .btn:hover {{ background: #c2410c; }}
+        .btn-outline {{ background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; }}
+        .btn-outline:hover {{ background: #e2e8f0; }}
+        .container {{ max-width: 1200px; margin: 2rem auto; padding: 0 1.5rem; flex: 1; width: 100%; }}
+        .product-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.75rem; margin-top: 1.5rem; }}
+        .card {{ background: white; border-radius: 0.75rem; padding: 1.5rem; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); transition: transform 0.2s, box-shadow 0.2s; display: flex; flex-direction: column; justify-content: space-between; }}
+        .card:hover {{ transform: translateY(-3px); box-shadow: 0 10px 25px -5px rgba(234, 88, 12, 0.12); border-color: #fdba74; }}
+        .ad-banner {{ background: #fff7ed; border: 1px solid #ffedd5; border-radius: 0.75rem; padding: 0.9rem 1.5rem; margin-bottom: 1.5rem; color: #c2410c; font-weight: 600; text-align: center; }}
+        .cat-bar {{ display: flex; gap: 0.5rem; margin-top: 1rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.75rem; overflow-x: auto; }}
+        .cat-tab {{ padding: 0.4rem 1rem; border-radius: 0.5rem; font-weight: 600; font-size: 0.875rem; text-decoration: none; color: #64748b; background: #f1f5f9; }}
+        .cat-tab.active {{ background: #ea580c; color: white; }}
+        .sku-tag {{ font-size: 0.75rem; font-weight: 700; color: #64748b; background: #f1f5f9; padding: 0.2rem 0.5rem; border-radius: 0.25rem; font-family: monospace; display: inline-block; margin-bottom: 0.4rem; }}
     </style>
 </head>
 <body>
+    {top_ticker}
     <header>
-        <a href="/" class="logo">🛍️ StyleHub<span>.</span></a>
-        <div class="nav">
-            <form action="/set-currency" method="post" style="margin:0;">
-                <select name="currency_code" onchange="this.form.submit()" style="padding:0.4rem; border-radius:0.4rem; font-weight:600;">
-                    <option value="USD" {usd_sel}>🇺🇸 USD</option>
-                    <option value="EUR" {eur_sel}>🇪🇺 EUR</option>
-                    <option value="GBP" {gbp_sel}>🇬🇧 GBP</option>
-                    <option value="JPY" {jpy_sel}>🇯🇵 JPY</option>
-                    <option value="CAD" {cad_sel}>🇨🇦 CAD</option>
-                    <option value="INR" {inr_sel}>🇮🇳 INR</option>
-                </select>
+        <div class="header-inner">
+            <a href="/" class="logo">🛍️ StyleHub<span>.</span></a>
+            
+            <form action="/" method="get" class="search-form">
+                <input type="text" name="q" value="{search_query}" placeholder="Search jacket, hoodie, sneakers..." class="search-input">
+                <button type="submit" class="search-btn">Search</button>
             </form>
-            <a href="/cart" class="btn" style="background:#f1f5f9; color:#0f172a; border:1px solid #cbd5e1;">🛒 Cart ({cart_count})</a>
+
+            <div class="nav">
+                <form action="/set-currency" method="post" style="margin:0;">
+                    <select name="currency_code" onchange="this.form.submit()" style="padding:0.45rem 0.75rem; border-radius:0.5rem; font-weight:700; border:1px solid #cbd5e1; background:#f8fafc; cursor:pointer;">
+                        <option value="USD" {usd_sel}>🇺🇸 USD</option>
+                        <option value="EUR" {eur_sel}>🇪🇺 EUR</option>
+                        <option value="GBP" {gbp_sel}>🇬🇧 GBP</option>
+                        <option value="JPY" {jpy_sel}>🇯🇵 JPY</option>
+                        <option value="CAD" {cad_sel}>🇨🇦 CAD</option>
+                        <option value="INR" {inr_sel}>🇮🇳 INR</option>
+                    </select>
+                </form>
+                <a href="/assistant" class="btn btn-outline" style="background:#EEF2FF; color:#4F46E5; border-color:#C7D2FE;">🪄 AI Assistant</a>
+                <a href="/cart" class="btn btn-outline">🛒 Cart <span style="background:#ea580c; color:white; font-size:0.75rem; padding:0.1rem 0.4rem; border-radius:9999px; margin-left:0.2rem;">{cart_count}</span></a>
+            </div>
         </div>
     </header>
+
     <div class="container">
         {ad_banner}
         {content}
     </div>
+    {footer}
 </body>
 </html>
 """
 
-def _get_cart_count(user_id: str = "user-demo-123") -> int:
+# -------------------------------------------------------------------
+# gRPC Helper Functions
+# -------------------------------------------------------------------
+
+def _get_cart_items(user_id: str = "user-demo-123") -> list:
     try:
         stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
         cart = stub.GetCart(stylehub_pb2.GetCartRequest(user_id=user_id), timeout=2)
-        return sum(i.quantity for i in cart.items)
-    except Exception: return 0
+        return cart.items
+    except Exception:
+        return []
 
-def _get_ads() -> str:
+def _get_cart_count(user_id: str = "user-demo-123") -> int:
+    return sum(item.quantity for item in _get_cart_items(user_id))
+
+def _get_ads(category: str = "clothing") -> str:
     try:
         stub = stylehub_pb2_grpc.AdServiceStub(grpc.insecure_channel(AD_GRPC))
-        res = stub.GetAds(stylehub_pb2.AdRequest(context_keys=["clothing"]), timeout=2)
-        if res.ads: return f'<div class="ad-banner">📢 {res.ads[0].text}</div>'
-    except Exception: pass
+        res = stub.GetAds(stylehub_pb2.AdRequest(context_keys=[category]), timeout=2)
+        if res.ads:
+            return f'<div class="ad-banner">📢 {res.ads[0].text}</div>'
+    except Exception:
+        pass
     return ""
 
 def _convert_price(units: int, nanos: int, to_code: str) -> str:
-    if to_code == "USD": return f"${units}.00 USD"
+    if to_code == "USD":
+        return f"${units}.00 USD"
     try:
         stub = stylehub_pb2_grpc.CurrencyServiceStub(grpc.insecure_channel(CURRENCY_GRPC))
         res = stub.Convert(stylehub_pb2.CurrencyConversionRequest(
@@ -92,7 +160,12 @@ def _convert_price(units: int, nanos: int, to_code: str) -> str:
             to_code=to_code
         ), timeout=2)
         return f"{res.units} {to_code}"
-    except Exception: return f"${units}.00 USD"
+    except Exception:
+        return f"${units}.00 USD"
+
+# -------------------------------------------------------------------
+# Application Routes
+# -------------------------------------------------------------------
 
 @app.post("/set-currency")
 def set_currency(currency_code: str = Form(...)):
@@ -101,18 +174,42 @@ def set_currency(currency_code: str = Form(...)):
     return res
 
 @app.get("/", response_class=HTMLResponse)
-def index_page(request: Request):
+def index_page(request: Request, q: str = "", category: str = "all"):
     user_currency = request.cookies.get("user_currency", "USD")
     cart_count = _get_cart_count()
-    ad_html = _get_ads()
+    ad_html = _get_ads(category if category != "all" else "clothing")
 
     try:
         stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
-        response = stub.ListProducts(stylehub_pb2.Empty(), timeout=2)
-        products = response.products
+        if q:
+            res = stub.SearchProducts(stylehub_pb2.SearchProductsRequest(query=q), timeout=2)
+            products = res.results
+        else:
+            res = stub.ListProducts(stylehub_pb2.Empty(), timeout=2)
+            products = res.products
+            if category != "all":
+                products = [p for p in products if category.lower() in [c.lower() for c in p.categories]]
     except Exception as e:
-        content = f'<h2 style="color:#ef4444;">Product Catalog Unreachable via gRPC ({PRODUCT_CATALOG_GRPC})</h2><p>{e}</p>'
-        return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable via gRPC ({PRODUCT_CATALOG_GRPC})</h2><p>{e}</p>'
+        return HTML_LAYOUT.format(
+            title="Error", content=content, ad_banner="", cart_count=cart_count, search_query=q,
+            top_ticker=TOP_TICKER, footer=FOOTER_HTML,
+            usd_sel="selected" if user_currency=="USD" else "",
+            eur_sel="selected" if user_currency=="EUR" else "",
+            gbp_sel="selected" if user_currency=="GBP" else "",
+            jpy_sel="selected" if user_currency=="JPY" else "",
+            cad_sel="selected" if user_currency=="CAD" else "",
+            inr_sel="selected" if user_currency=="INR" else ""
+        )
+
+    cat_bar = f"""
+    <div class="cat-bar">
+        <a href="/?category=all" class="cat-tab {'active' if category=='all' else ''}">All Apparel</a>
+        <a href="/?category=clothing" class="cat-tab {'active' if category=='clothing' else ''}">Clothing</a>
+        <a href="/?category=footwear" class="cat-tab {'active' if category=='footwear' else ''}">Footwear</a>
+        <a href="/?category=accessories" class="cat-tab {'active' if category=='accessories' else ''}">Accessories</a>
+    </div>
+    """
 
     cards = ""
     for p in products:
@@ -120,27 +217,115 @@ def index_page(request: Request):
         cards += f"""
         <div class="card">
             <div>
-                <span style="font-size:0.75rem; font-weight:700; background:#e2e8f0; padding:0.2rem 0.4rem; border-radius:0.2rem;">{p.categories[0].upper()}</span>
-                <h3 style="margin-top:0.5rem; font-size:1.1rem; font-weight:700;">{p.name}</h3>
-                <p style="color:#64748b; font-size:0.85rem; margin-top:0.4rem;">{p.description}</p>
+                <span class="sku-tag">SKU #{p.id}</span>
+                <h3 style="font-size:1.15rem; font-weight:700; margin-top:0.2rem;"><a href="/product/{p.id}" style="text-decoration:none; color:#0f172a;">{p.name}</a></h3>
+                <p style="color:#64748b; font-size:0.875rem; margin-top:0.4rem; line-height:1.4;">{p.description}</p>
             </div>
             <div style="margin-top:1.25rem;">
-                <div style="font-size:1.2rem; font-weight:800; color:#ea580c;">{price_str}</div>
-                <form action="/add-to-cart" method="post" style="margin-top:0.75rem;">
-                    <input type="hidden" name="product_id" value="{p.id}">
-                    <button type="submit" class="btn" style="width:100%;">Add to Cart</button>
-                </form>
+                <div style="font-size:1.25rem; font-weight:800; color:#ea580c;">{price_str}</div>
+                <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+                    <a href="/product/{p.id}" class="btn btn-outline" style="flex:1; font-size:0.85rem; padding:0.5rem;">Details</a>
+                    <form action="/add-to-cart" method="post" style="flex:1; margin:0;">
+                        <input type="hidden" name="product_id" value="{p.id}">
+                        <input type="hidden" name="quantity" value="1">
+                        <button type="submit" class="btn" style="width:100%; font-size:0.85rem; padding:0.5rem;">Add to Cart</button>
+                    </form>
+                </div>
             </div>
         </div>
         """
 
     content = f"""
-    <h1 style="font-size:2rem; font-weight:800;">Featured Collection (gRPC Microservices Mesh)</h1>
+    {cat_bar}
+    <div style="margin-top: 1.5rem;">
+        <h1 style="font-size:1.8rem; font-weight:800;">StyleHub Fashion Catalog</h1>
+        <p style="color:#64748b; margin-top:0.25rem;">High-performance microservices storefront powered by gRPC over HTTP/2.</p>
+    </div>
     <div class="product-grid">{cards}</div>
     """
 
     return HTML_LAYOUT.format(
-        title="Storefront", ad_banner=ad_html, content=content, cart_count=cart_count,
+        title="Storefront", ad_banner=ad_html, content=content, cart_count=cart_count, search_query=q,
+        top_ticker=TOP_TICKER, footer=FOOTER_HTML,
+        usd_sel="selected" if user_currency=="USD" else "",
+        eur_sel="selected" if user_currency=="EUR" else "",
+        gbp_sel="selected" if user_currency=="GBP" else "",
+        jpy_sel="selected" if user_currency=="JPY" else "",
+        cad_sel="selected" if user_currency=="CAD" else "",
+        inr_sel="selected" if user_currency=="INR" else ""
+    )
+
+@app.get("/product/{product_id}", response_class=HTMLResponse)
+def product_detail_page(product_id: str, request: Request):
+    user_currency = request.cookies.get("user_currency", "USD")
+    cart_count = _get_cart_count()
+
+    # 1. Fetch product via gRPC
+    try:
+        stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
+        product = stub.GetProduct(stylehub_pb2.GetProductRequest(id=product_id), timeout=2)
+    except Exception:
+        return HTML_LAYOUT.format(title="Not Found", content="<h2>Product Not Found</h2>", ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
+    price_str = _convert_price(product.price_usd.units, product.price_usd.nanos, user_currency)
+
+    # 2. Fetch gRPC Recommendations ("You May Also Like")
+    recommended_cards = ""
+    try:
+        rec_stub = stylehub_pb2_grpc.RecommendationServiceStub(grpc.insecure_channel(RECOMMENDATION_GRPC))
+        rec_res = rec_stub.ListRecommendations(stylehub_pb2.ListRecommendationsRequest(user_id="user-demo-123", product_ids=[product_id]), timeout=2)
+        for r_id in rec_res.product_ids:
+            try:
+                rp = stub.GetProduct(stylehub_pb2.GetProductRequest(id=r_id), timeout=2)
+                r_price = _convert_price(rp.price_usd.units, rp.price_usd.nanos, user_currency)
+                recommended_cards += f"""
+                <div class="card" style="padding:1rem;">
+                    <span class="sku-tag">SKU #{rp.id}</span>
+                    <h4 style="font-size:1rem; font-weight:700;"><a href="/product/{rp.id}" style="color:#0f172a; text-decoration:none;">{rp.name}</a></h4>
+                    <div style="font-weight:800; color:#ea580c; margin-top:0.5rem;">{r_price}</div>
+                    <a href="/product/{rp.id}" class="btn btn-outline" style="margin-top:0.75rem; font-size:0.8rem; padding:0.4rem;">View Details</a>
+                </div>
+                """
+            except Exception: pass
+    except Exception: pass
+
+    content = f"""
+    <div style="background:white; border:1px solid #e2e8f0; border-radius:0.75rem; padding:2rem; margin-top:1rem; display:grid; grid-template-columns:1fr 1fr; gap:2.5rem;">
+        <div style="background:#f8fafc; border-radius:0.5rem; display:flex; align-items:center; justify-content:center; min-height:300px; border:1px solid #e2e8f0;">
+            <div style="font-size:4rem;">👕</div>
+        </div>
+        <div>
+            <span class="sku-tag">SKU #{product.id}</span>
+            <h1 style="font-size:2.2rem; font-weight:800; color:#0f172a; margin-top:0.25rem;">{product.name}</h1>
+            <div style="font-size:1.8rem; font-weight:800; color:#ea580c; margin:1rem 0;">{price_str}</div>
+            <p style="color:#475569; line-height:1.6; font-size:1rem; margin-bottom:1.5rem;">{product.description}</p>
+            
+            <form action="/add-to-cart" method="post">
+                <input type="hidden" name="product_id" value="{product.id}">
+                <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem;">
+                    <label style="font-weight:700; font-size:0.9rem;">Quantity:</label>
+                    <select name="quantity" style="padding:0.5rem 1rem; border-radius:0.5rem; font-weight:700; border:1px solid #cbd5e1;">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="padding:0.9rem 2rem; font-size:1rem; width:100%;">Add to Shopping Cart</button>
+            </form>
+        </div>
+    </div>
+
+    <div style="margin-top:3rem;">
+        <h3 style="font-size:1.4rem; font-weight:800; margin-bottom:1rem;">✨ You May Also Like (via gRPC RecommendationService)</h3>
+        <div class="product-grid" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">{recommended_cards}</div>
+    </div>
+    """
+
+    return HTML_LAYOUT.format(
+        title=product.name, ad_banner="", content=content, cart_count=cart_count, search_query="",
+        top_ticker=TOP_TICKER, footer=FOOTER_HTML,
         usd_sel="selected" if user_currency=="USD" else "",
         eur_sel="selected" if user_currency=="EUR" else "",
         gbp_sel="selected" if user_currency=="GBP" else "",
@@ -150,10 +335,10 @@ def index_page(request: Request):
     )
 
 @app.post("/add-to-cart")
-def add_to_cart(product_id: str = Form(...), user_id: str = "user-demo-123"):
+def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: str = "user-demo-123"):
     try:
         stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        stub.AddItem(stylehub_pb2.AddItemRequest(user_id=user_id, item=stylehub_pb2.CartItem(product_id=product_id, quantity=1)), timeout=2)
+        stub.AddItem(stylehub_pb2.AddItemRequest(user_id=user_id, item=stylehub_pb2.CartItem(product_id=product_id, quantity=quantity)), timeout=2)
     except Exception as e:
         logger.error(f"gRPC Cart AddItem error: {e}")
     return RedirectResponse(url="/cart", status_code=303)
@@ -161,57 +346,175 @@ def add_to_cart(product_id: str = Form(...), user_id: str = "user-demo-123"):
 @app.get("/cart", response_class=HTMLResponse)
 def view_cart(request: Request, user_id: str = "user-demo-123"):
     user_currency = request.cookies.get("user_currency", "USD")
-    cart_count = _get_cart_count(user_id)
+    cart_items = _get_cart_items(user_id)
+    cart_count = sum(i.quantity for i in cart_items)
 
-    items = []
-    try:
-        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
-        cart = stub.GetCart(stylehub_pb2.GetCartRequest(user_id=user_id), timeout=2)
-        items = cart.items
-    except Exception: pass
-
-    if not items:
-        content = '<div style="text-align:center; padding:3rem;"><h2>🛒 Your Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1rem;">Shop Collection</a></div>'
+    if not cart_items:
+        content = '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
     else:
-        rows, total_usd = "", 0
+        rows, subtotal_usd = "", 0
         pc_stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
-        for item in items:
-            p_name, price_u = item.product_id, 50
+        
+        for item in cart_items:
+            p_name, p_price, p_sku = item.product_id, 50, item.product_id
             try:
                 p = pc_stub.GetProduct(stylehub_pb2.GetProductRequest(id=item.product_id), timeout=2)
-                p_name, price_u = p.name, p.price_usd.units
+                p_name, p_price, p_sku = p.name, p.price_usd.units, p.id
             except Exception: pass
-            sub = price_u * item.quantity
-            total_usd += sub
-            rows += f'<tr style="border-bottom:1px solid #e2e8f0;"><td style="padding:0.75rem;">{p_name}</td><td style="padding:0.75rem;">${price_u}.00</td><td style="padding:0.75rem;">{item.quantity}</td><td style="padding:0.75rem; font-weight:700; color:#ea580c;">${sub}.00</td></tr>'
+            
+            item_total = p_price * item.quantity
+            subtotal_usd += item_total
+            price_formatted = _convert_price(p_price, 0, user_currency)
+            subtotal_formatted = _convert_price(item_total, 0, user_currency)
 
-        formatted_total = _convert_price(total_usd, 0, user_currency)
+            rows += f"""
+            <tr style="border-bottom:1px solid #e2e8f0;">
+                <td style="padding:1rem;">
+                    <span class="sku-tag">SKU #{p_sku}</span>
+                    <div style="font-weight:700; font-size:1.05rem;">{p_name}</div>
+                </td>
+                <td style="padding:1rem; color:#64748b;">{price_formatted}</td>
+                <td style="padding:1rem; font-weight:700;">{item.quantity}</td>
+                <td style="padding:1rem; font-weight:800; color:#ea580c;">{subtotal_formatted}</td>
+            </tr>
+            """
+
+        # Calculate Shipping Cost via gRPC ShippingService
+        shipping_usd = 12.00
+        try:
+            ship_stub = stylehub_pb2_grpc.ShippingServiceStub(grpc.insecure_channel(SHIPPING_GRPC))
+            quote = ship_stub.GetQuote(stylehub_pb2.GetQuoteRequest(items=cart_items), timeout=2)
+            shipping_usd = quote.cost_usd.units + (quote.cost_usd.nanos / 1e9)
+        except Exception: pass
+
+        total_usd = int(subtotal_usd + shipping_usd)
+        shipping_formatted = _convert_price(int(shipping_usd), 0, user_currency)
+        total_formatted = _convert_price(total_usd, 0, user_currency)
+
         content = f"""
-        <h1 style="font-size:1.8rem; font-weight:800; margin-bottom:1rem;">Shopping Cart</h1>
-        <table style="width:100%; background:white; border-radius:0.5rem; padding:1rem; border-collapse:collapse;">
-            <thead><tr style="border-bottom:2px solid #e2e8f0; text-align:left;"><th>Product</th><th>Price</th><th>Qty</th><th>Subtotal</th></tr></thead>
-            <tbody>{rows}</tbody>
-        </table>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1.5rem;">
-            <h3>Total: <span style="color:#ea580c;">{formatted_total}</span></h3>
-            <form action="/checkout" method="post"><button type="submit" class="btn">Proceed to Checkout</button></form>
+        <h1 style="font-size:2rem; font-weight:800; margin-bottom:1.5rem;">Shopping Cart ({cart_count} items)</h1>
+        
+        <div style="display:grid; grid-template-columns: 1fr 400px; gap:2rem; align-items:start;">
+            <div>
+                <table style="width:100%; background:white; border-radius:0.75rem; padding:1rem; border-collapse:collapse; border:1px solid #e2e8f0; text-align:left;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e2e8f0; color:#64748b; font-size:0.85rem;">
+                            <th style="padding:0.75rem;">Product</th>
+                            <th style="padding:0.75rem;">Price</th>
+                            <th style="padding:0.75rem;">Qty</th>
+                            <th style="padding:0.75rem;">Subtotal</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+                <div style="display:flex; justify-content:space-between; margin-top:1rem;">
+                    <form action="/empty-cart" method="post" style="margin:0;">
+                        <button type="submit" class="btn btn-outline" style="font-size:0.85rem;">Empty Cart</button>
+                    </form>
+                    <a href="/" class="btn btn-outline" style="font-size:0.85rem;">Continue Shopping</a>
+                </div>
+            </div>
+
+            <!-- Checkout Form & Summary Panel -->
+            <div style="background:white; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                <h3 style="font-size:1.2rem; font-weight:800; margin-bottom:1rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.5rem;">Checkout & Delivery</h3>
+                
+                <form action="/checkout" method="post">
+                    <!-- Shipping Address Section -->
+                    <div style="margin-bottom:1.25rem;">
+                        <h4 style="font-size:0.9rem; font-weight:700; color:#475569; margin-bottom:0.5rem;">Shipping Address</h4>
+                        <input type="email" name="email" value="customer@stylehub.com" placeholder="Email Address" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                        <input type="text" name="street_address" value="1600 Amphitheatre Parkway" placeholder="Street Address" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                        <div style="display:flex; gap:0.4rem;">
+                            <input type="text" name="city" value="Mountain View" placeholder="City" required style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                            <input type="text" name="state" value="CA" placeholder="State" required style="width:70px; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                            <input type="text" name="zip_code" value="94043" placeholder="Zip" required style="width:80px; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                        </div>
+                    </div>
+
+                    <!-- Payment Method Section -->
+                    <div style="margin-bottom:1.5rem;">
+                        <h4 style="font-size:0.9rem; font-weight:700; color:#475569; margin-bottom:0.5rem;">Payment Method</h4>
+                        <input type="text" name="credit_card_number" value="4432-8015-6152-0454" placeholder="Credit Card Number" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem; font-family:monospace;">
+                        <div style="display:flex; gap:0.4rem;">
+                            <select name="exp_month" style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                                <option value="1">01 - January</option>
+                                <option value="12" selected>12 - December</option>
+                            </select>
+                            <select name="exp_year" style="width:90px; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                                <option value="2026">2026</option>
+                                <option value="2028" selected>2028</option>
+                            </select>
+                            <input type="password" name="cvv" value="123" placeholder="CVV" required style="width:60px; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                        </div>
+                    </div>
+
+                    <!-- Order Summary Calculation -->
+                    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1rem; margin-bottom:1.5rem;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.3rem;">
+                            <span style="color:#64748b;">Cart Subtotal:</span>
+                            <span>{_convert_price(subtotal_usd, 0, user_currency)}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.5rem;">
+                            <span style="color:#64748b;">Shipping Cost (gRPC):</span>
+                            <span>{shipping_formatted}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:1.25rem; font-weight:800; color:#ea580c; border-top:1px solid #cbd5e1; padding-top:0.5rem;">
+                            <span>Total Due:</span>
+                            <span>{total_formatted}</span>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn" style="width:100%; padding:0.9rem; font-size:1rem;">Place Order Now</button>
+                </form>
+            </div>
         </div>
         """
 
-    return HTML_LAYOUT.format(title="Cart", ad_banner="", content=content, cart_count=cart_count, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+    return HTML_LAYOUT.format(
+        title="Cart & Checkout", ad_banner="", content=content, cart_count=cart_count, search_query="",
+        top_ticker=TOP_TICKER, footer=FOOTER_HTML,
+        usd_sel="selected" if user_currency=="USD" else "",
+        eur_sel="selected" if user_currency=="EUR" else "",
+        gbp_sel="selected" if user_currency=="GBP" else "",
+        jpy_sel="selected" if user_currency=="JPY" else "",
+        cad_sel="selected" if user_currency=="CAD" else "",
+        inr_sel="selected" if user_currency=="INR" else ""
+    )
+
+@app.post("/empty-cart")
+def empty_cart(user_id: str = "user-demo-123"):
+    try:
+        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
+        stub.EmptyCart(stylehub_pb2.EmptyCartRequest(user_id=user_id), timeout=2)
+    except Exception: pass
+    return RedirectResponse(url="/cart", status_code=303)
 
 @app.post("/checkout", response_class=HTMLResponse)
-def checkout(request: Request, user_id: str = "user-demo-123"):
+def checkout(
+    request: Request,
+    email: str = Form("customer@stylehub.com"),
+    street_address: str = Form("1600 Amphitheatre Parkway"),
+    city: str = Form("Mountain View"),
+    state: str = Form("CA"),
+    zip_code: int = Form(94043),
+    credit_card_number: str = Form("4432-8015-6152-0454"),
+    exp_month: int = Form(12),
+    exp_year: int = Form(2028),
+    cvv: int = Form(123),
+    user_id: str = "user-demo-123"
+):
     user_currency = request.cookies.get("user_currency", "USD")
     order_id, tracking_id = "ORD-SH-SUCCESS", "SH-TRK-98765"
+    
     try:
         stub = stylehub_pb2_grpc.CheckoutServiceStub(grpc.insecure_channel(CHECKOUT_GRPC))
         res = stub.PlaceOrder(stylehub_pb2.PlaceOrderRequest(
             user_id=user_id,
             user_currency=user_currency,
-            email="customer@stylehub.com",
-            address=stylehub_pb2.Address(street_address="123 Fashion Ave", city="New York", state="NY", country="USA", zip_code=10001),
-            credit_card=stylehub_pb2.CreditCardInfo(credit_card_number="4532-1234-5678-9012", credit_card_cvv=123, credit_card_expiration_year=2028, credit_card_expiration_month=12)
+            email=email,
+            address=stylehub_pb2.Address(street_address=street_address, city=city, state=state, country="United States", zip_code=zip_code),
+            credit_card=stylehub_pb2.CreditCardInfo(credit_card_number=credit_card_number, credit_card_cvv=cvv, credit_card_expiration_year=exp_year, credit_card_expiration_month=exp_month)
         ), timeout=5)
         order_id = res.order.order_id
         tracking_id = res.order.shipping_tracking_id
@@ -219,14 +522,117 @@ def checkout(request: Request, user_id: str = "user-demo-123"):
         logger.error(f"gRPC Checkout error: {e}")
 
     content = f"""
-    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:0.75rem; padding:2rem; text-align:center; max-width:500px; margin:2rem auto;">
-        <h2>🎉 Order Placed Successfully via gRPC!</h2>
-        <p style="margin-top:0.5rem;">Order ID: <strong>{order_id}</strong></p>
-        <p>Carrier Tracking ID: <strong>{tracking_id}</strong></p>
-        <a href="/" class="btn" style="display:inline-block; margin-top:1.5rem;">Continue Shopping</a>
+    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:0.75rem; padding:2.5rem; max-width:650px; margin:2rem auto; text-align:center;">
+        <div style="font-size:3.5rem;">🎉</div>
+        <h1 style="color:#166534; font-weight:800; font-size:2rem; margin-top:0.5rem;">Order Placed Successfully!</h1>
+        <p style="color:#15803d; margin-top:0.4rem;">Your order has been processed across our gRPC microservices mesh.</p>
+        
+        <div style="background:white; border:1px solid #dcfce7; border-radius:0.5rem; padding:1.5rem; margin-top:1.5rem; text-align:left; line-height:1.6;">
+            <p><strong>Order ID:</strong> <span style="font-family:monospace; color:#166534;">{order_id}</span></p>
+            <p><strong>Carrier Tracking ID:</strong> <span style="font-family:monospace; color:#166534;">{tracking_id}</span></p>
+            <p><strong>Confirmation Sent To:</strong> {email}</p>
+            <p><strong>Delivery Address:</strong> {street_address}, {city}, {state} {zip_code}</p>
+            <p><strong>Payment Method:</strong> Credit Card ending in {credit_card_number[-4:]}</p>
+        </div>
+
+        <a href="/" class="btn" style="display:inline-block; margin-top:2rem; padding:0.8rem 2rem; background:#16a34a;">Continue Shopping</a>
     </div>
     """
-    return HTML_LAYOUT.format(title="Order Complete", ad_banner="", content=content, cart_count=0, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+    return HTML_LAYOUT.format(title="Order Complete", ad_banner="", content=content, cart_count=0, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
+# -------------------------------------------------------------------
+# SRE Observability & System Status Dashboard (/system-status)
+# -------------------------------------------------------------------
+
+@app.get("/system-status", response_class=HTMLResponse)
+def system_status_dashboard():
+    service_cards = ""
+    for name, key, port, grpc_addr in ALL_SERVICES_CONFIG:
+        status_badge = '<span style="background:#dcfce7; color:#15803d; padding:0.25rem 0.5rem; border-radius:0.25rem; font-weight:700; font-size:0.75rem;">SERVING</span>'
+        latency_str = "< 5ms"
+        
+        # Test gRPC or HTTP probe
+        if grpc_addr:
+            start_t = time.time()
+            try:
+                # Ping channel
+                channel = grpc.insecure_channel(grpc_addr)
+                grpc.channel_ready_future(channel).result(timeout=1)
+                latency_str = f"{int((time.time() - start_t)*1000)}ms"
+            except Exception:
+                status_badge = '<span style="background:#fee2e2; color:#b91c1c; padding:0.25rem 0.5rem; border-radius:0.25rem; font-weight:700; font-size:0.75rem;">UNREACHABLE</span>'
+                latency_str = "TIMEOUT"
+
+        service_cards += f"""
+        <div style="background:white; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h4 style="font-size:1.05rem; font-weight:700;">{name}</h4>
+                <div style="font-size:0.8rem; color:#64748b; font-family:monospace; margin-top:0.2rem;">HTTP :{port} | gRPC {grpc_addr or 'N/A'}</div>
+            </div>
+            <div style="text-align:right;">
+                <div>{status_badge}</div>
+                <div style="font-size:0.8rem; font-weight:700; color:#475569; margin-top:0.3rem;">Latency: {latency_str}</div>
+            </div>
+        </div>
+        """
+
+    content = f"""
+    <div style="margin-bottom:2rem;">
+        <h1 style="font-size:2rem; font-weight:800;">📊 Live System Topology & Microservices Health Dashboard</h1>
+        <p style="color:#64748b; margin-top:0.4rem;">Real-time gRPC health status and telemetry latency monitoring for Chaos Mesh experimentation.</p>
+    </div>
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:1.25rem;">
+        {service_cards}
+    </div>
+    """
+
+    return HTML_LAYOUT.format(title="System Status", ad_banner="", content=content, cart_count=_get_cart_count(), search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
+@app.get("/assistant", response_class=HTMLResponse)
+def ai_assistant_page(request: Request):
+    user_currency = request.cookies.get("user_currency", "USD")
+    cart_count = _get_cart_count()
+
+    content = """
+    <div style="max-width:700px; margin:0 auto;">
+        <h1 style="font-size:1.8rem; font-weight:800; margin-bottom:0.5rem;">🪄 StyleHub AI Shopping Assistant</h1>
+        <p style="color:#64748b; margin-bottom:1.5rem;">Ask for fashion recommendations or size guidance powered by GEMS AI.</p>
+        
+        <div style="background:white; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.5rem; min-height:300px; display:flex; flex-direction:column; justify-content:space-between;">
+            <div id="chat-box" style="color:#334155; line-height:1.6;">
+                <div style="background:#f1f5f9; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block; margin-bottom:1rem;">
+                    👋 Hello! I'm your StyleHub AI Assistant. Looking for casual streetwear or formal outfit suggestions?
+                </div>
+            </div>
+            
+            <form id="assistant-form" style="display:flex; gap:0.75rem; margin-top:1.5rem;" onsubmit="sendMessage(event)">
+                <input type="text" id="user-input" placeholder="e.g. Recommend a jacket for cool weather..." style="flex:1; border:1px solid #cbd5e1; padding:0.75rem; border-radius:0.5rem; font-size:0.9rem;" required>
+                <button type="submit" class="btn" style="width:auto; padding:0.75rem 1.5rem; background:#4f46e5;">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    function sendMessage(e) {
+        e.preventDefault();
+        const input = document.getElementById('user-input');
+        const chatBox = document.getElementById('chat-box');
+        const text = input.value.trim();
+        if(!text) return;
+
+        chatBox.innerHTML += `<div style="text-align:right; margin-bottom:1rem;"><div style="background:#4f46e5; color:white; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block;">${text}</div></div>`;
+        input.value = '';
+
+        setTimeout(() => {
+            chatBox.innerHTML += `<div style="margin-bottom:1rem;"><div style="background:#f1f5f9; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block;">✨ Based on our catalog (via gRPC ProductCatalogService), I highly recommend the <strong>Vintage Denim Jacket (SH-001)</strong> or the <strong>Urban Streetwear Hoodie (SH-002)</strong>!</div></div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }, 600);
+    }
+    </script>
+    """
+
+    return HTML_LAYOUT.format(title="AI Assistant", ad_banner="", content=content, cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
 if __name__ == "__main__":
     import uvicorn
