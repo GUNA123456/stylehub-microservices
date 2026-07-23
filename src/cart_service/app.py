@@ -1,11 +1,9 @@
 """
 StyleHub - Cart Service
-Custom Python Microservice managing user shopping carts with Redis Storage and gRPC Support
+gRPC Microservice managing user shopping carts backed by Redis
 """
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Dict
+from fastapi import FastAPI
 import os, json, logging, sys, concurrent.futures, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -14,30 +12,13 @@ from genproto import stylehub_pb2, stylehub_pb2_grpc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CartService")
 
-app = FastAPI(
-    title="StyleHub Cart Service",
-    description="Manages active shopping carts for StyleHub users backed by Redis",
-    version="1.0.0"
-)
+app = FastAPI(title="StyleHub Cart Service")
 
-class CartItem(BaseModel):
-    product_id: str
-    quantity: int
-
-class AddItemRequest(BaseModel):
-    user_id: str
-    item: CartItem
-
-class Cart(BaseModel):
-    user_id: str
-    items: List[CartItem]
-
-# Redis Setup with In-Memory Fallback
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 redis_client = None
-IN_MEMORY_CARTS: Dict[str, List[dict]] = {}
+IN_MEMORY_CARTS = {}
 
 try:
     import redis
@@ -46,54 +27,46 @@ try:
     redis_client = r
     logger.info(f"⚡ Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
 except Exception as e:
-    logger.warning(f"⚠️ Redis connection failed ({e}). Falling back to in-memory store.")
-    redis_client = None
+    logger.warning(f"⚠️ Redis unavailable ({e}). Using in-memory fallback.")
 
-def _get_user_cart_items(user_id: str) -> List[dict]:
+def _get_cart(user_id: str):
     if redis_client:
         try:
             raw = redis_client.get(f"cart:{user_id}")
-            if raw:
-                return json.loads(raw)
-            return []
-        except Exception as e:
-            logger.error(f"Redis read error: {e}")
+            return json.loads(raw) if raw else []
+        except Exception: pass
     return IN_MEMORY_CARTS.get(user_id, [])
 
-def _save_user_cart_items(user_id: str, items: List[dict]):
+def _save_cart(user_id: str, items: list):
     if redis_client:
         try:
             redis_client.set(f"cart:{user_id}", json.dumps(items))
             return
-        except Exception as e:
-            logger.error(f"Redis write error: {e}")
+        except Exception: pass
     IN_MEMORY_CARTS[user_id] = items
 
 class CartServicer(stylehub_pb2_grpc.CartServiceServicer):
     def AddItem(self, request, context):
         user_id = request.user_id
-        item_dict = {"product_id": request.item.product_id, "quantity": request.item.quantity}
-        items = _get_user_cart_items(user_id)
+        items = _get_cart(user_id)
         found = False
-        for existing in items:
-            if existing["product_id"] == item_dict["product_id"]:
-                existing["quantity"] += item_dict["quantity"]
+        for i in items:
+            if i["product_id"] == request.item.product_id:
+                i["quantity"] += request.item.quantity
                 found = True
                 break
         if not found:
-            items.append(item_dict)
-        _save_user_cart_items(user_id, items)
+            items.append({"product_id": request.item.product_id, "quantity": request.item.quantity})
+        _save_cart(user_id, items)
         return stylehub_pb2.Empty()
 
     def GetCart(self, request, context):
-        user_id = request.user_id
-        raw_items = _get_user_cart_items(user_id)
-        pb_items = [stylehub_pb2.CartItem(product_id=i["product_id"], quantity=i["quantity"]) for i in raw_items]
-        return stylehub_pb2.Cart(user_id=user_id, items=pb_items)
+        items = _get_cart(request.user_id)
+        pb_items = [stylehub_pb2.CartItem(product_id=i["product_id"], quantity=i["quantity"]) for i in items]
+        return stylehub_pb2.Cart(user_id=request.user_id, items=pb_items)
 
     def EmptyCart(self, request, context):
-        user_id = request.user_id
-        _save_user_cart_items(user_id, [])
+        _save_cart(request.user_id, [])
         return stylehub_pb2.Empty()
 
 grpc_server = None
@@ -106,47 +79,16 @@ def startup_event():
     grpc_port = int(os.getenv("GRPC_PORT", "50052"))
     grpc_server.add_insecure_port(f"[::]:{grpc_port}")
     grpc_server.start()
-    logger.info(f"CartService gRPC server running on port {grpc_port}")
+    logger.info(f"⚡ CartService gRPC active on port {grpc_port}")
 
 @app.on_event("shutdown")
 def shutdown_event():
-    global grpc_server
-    if grpc_server:
-        grpc_server.stop(grace=None)
+    if grpc_server: grpc_server.stop(grace=None)
 
 @app.get("/healthz")
 def health_check():
-    redis_status = "connected" if redis_client else "in-memory-fallback"
-    return {"status": "ok", "service": "cart-service", "storage": redis_status, "grpc_port": os.getenv("GRPC_PORT", "50052")}
-
-@app.post("/api/cart/items")
-def add_item(request: AddItemRequest):
-    user_id = request.user_id
-    item_dict = request.item.dict()
-    items = _get_user_cart_items(user_id)
-    found = False
-    for existing in items:
-        if existing["product_id"] == item_dict["product_id"]:
-            existing["quantity"] += item_dict["quantity"]
-            found = True
-            break
-    if not found:
-        items.append(item_dict)
-    _save_user_cart_items(user_id, items)
-    return {"status": "success", "user_id": user_id, "cart": items}
-
-@app.get("/api/cart/{user_id}", response_model=Cart)
-def get_cart(user_id: str):
-    raw_items = _get_user_cart_items(user_id)
-    items = [CartItem(**i) for i in raw_items]
-    return Cart(user_id=user_id, items=items)
-
-@app.delete("/api/cart/{user_id}")
-def empty_cart(user_id: str):
-    _save_user_cart_items(user_id, [])
-    return {"status": "success", "message": f"Cart for user '{user_id}' emptied."}
+    return {"status": "ok", "service": "cart-service", "storage": "redis" if redis_client else "in-memory"}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "8082"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8082")))
