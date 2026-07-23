@@ -4,6 +4,7 @@ gRPC Microservice managing user shopping carts backed by Redis with item removal
 """
 
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 import os, json, logging, sys, concurrent.futures, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -11,8 +12,6 @@ from genproto import stylehub_pb2, stylehub_pb2_grpc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CartService")
-
-app = FastAPI(title="StyleHub Cart Service")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -91,21 +90,18 @@ class CartServicer(stylehub_pb2_grpc.CartServiceServicer):
         _save_cart(request.user_id, [])
         return stylehub_pb2.Empty()
 
-grpc_server = None
-
-@app.on_event("startup")
-def startup_event():
-    global grpc_server
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
     stylehub_pb2_grpc.add_CartServiceServicer_to_server(CartServicer(), grpc_server)
     grpc_port = int(os.getenv("GRPC_PORT", "50052"))
     grpc_server.add_insecure_port(f"[::]:{grpc_port}")
     grpc_server.start()
     logger.info(f"⚡ CartService gRPC active on port {grpc_port}")
+    yield
+    grpc_server.stop(grace=None)
 
-@app.on_event("shutdown")
-def shutdown_event():
-    if grpc_server: grpc_server.stop(grace=None)
+app = FastAPI(title="StyleHub Cart Service", lifespan=lifespan)
 
 @app.get("/healthz")
 def health_check():

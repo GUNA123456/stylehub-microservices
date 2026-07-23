@@ -4,6 +4,7 @@ gRPC Microservice orchestrating Cart, Shipping, Payment, and Email workflows
 """
 
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 import os, uuid, logging, sys, concurrent.futures, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -11,8 +12,6 @@ from genproto import stylehub_pb2, stylehub_pb2_grpc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CheckoutService")
-
-app = FastAPI(title="StyleHub Checkout Service")
 
 CART_GRPC = os.getenv("CART_GRPC_ADDR", "localhost:50052")
 SHIPPING_GRPC = os.getenv("SHIPPING_GRPC_ADDR", "localhost:50055")
@@ -72,21 +71,18 @@ class CheckoutServicer(stylehub_pb2_grpc.CheckoutServiceServicer):
             shipping_cost=stylehub_pb2.Money(currency_code=request.user_currency, units=15, nanos=0)
         ))
 
-grpc_server = None
-
-@app.on_event("startup")
-def startup_event():
-    global grpc_server
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
     stylehub_pb2_grpc.add_CheckoutServiceServicer_to_server(CheckoutServicer(), grpc_server)
     grpc_port = int(os.getenv("GRPC_PORT", "50056"))
     grpc_server.add_insecure_port(f"[::]:{grpc_port}")
     grpc_server.start()
     logger.info(f"⚡ CheckoutService gRPC active on port {grpc_port}")
+    yield
+    grpc_server.stop(grace=None)
 
-@app.on_event("shutdown")
-def shutdown_event():
-    if grpc_server: grpc_server.stop(grace=None)
+app = FastAPI(title="StyleHub Checkout Service", lifespan=lifespan)
 
 @app.get("/healthz")
 def health_check(): return {"status": "ok", "service": "checkout-service"}

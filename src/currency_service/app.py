@@ -4,12 +4,11 @@ gRPC Microservice for multi-currency conversion
 """
 
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 import os, sys, concurrent.futures, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from genproto import stylehub_pb2, stylehub_pb2_grpc
-
-app = FastAPI(title="StyleHub Currency Service")
 
 EXCHANGE_RATES = {"USD": 1.0, "EUR": 0.92, "GBP": 0.78, "JPY": 155.0, "CAD": 1.36, "INR": 83.5}
 
@@ -29,21 +28,18 @@ class CurrencyServicer(stylehub_pb2_grpc.CurrencyServiceServicer):
         nanos = int((converted - units) * 1e9)
         return stylehub_pb2.Money(currency_code=to_code, units=units, nanos=nanos)
 
-grpc_server = None
-
-@app.on_event("startup")
-def startup_event():
-    global grpc_server
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
     stylehub_pb2_grpc.add_CurrencyServiceServicer_to_server(CurrencyServicer(), grpc_server)
     grpc_port = int(os.getenv("GRPC_PORT", "50053"))
     grpc_server.add_insecure_port(f"[::]:{grpc_port}")
     grpc_server.start()
     print(f"⚡ CurrencyService gRPC active on port {grpc_port}")
+    yield
+    grpc_server.stop(grace=None)
 
-@app.on_event("shutdown")
-def shutdown_event():
-    if grpc_server: grpc_server.stop(grace=None)
+app = FastAPI(title="StyleHub Currency Service", lifespan=lifespan)
 
 @app.get("/healthz")
 def health_check():

@@ -4,14 +4,12 @@ gRPC Microservice managing fashion apparel catalog & search
 """
 
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 import os, sys, concurrent.futures, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from genproto import stylehub_pb2, stylehub_pb2_grpc
 
-app = FastAPI(title="StyleHub Product Catalog Service")
-
-# Sample StyleHub Fashion Product Catalog Data
 PRODUCTS_DB = [
     {"id": "SH-001", "name": "Vintage Denim Jacket", "description": "Classic vintage washed denim jacket with reinforced stitching.", "picture": "/static/img/products/denim-jacket.jpg", "price": (89, 99000000), "cat": ["clothing", "jackets"]},
     {"id": "SH-002", "name": "Urban Streetwear Hoodie", "description": "Heavyweight organic cotton blend hoodie with relaxed fit.", "picture": "/static/img/products/streetwear-hoodie.jpg", "price": (64, 50000000), "cat": ["clothing", "hoodies"]},
@@ -44,21 +42,18 @@ class ProductCatalogServicer(stylehub_pb2_grpc.ProductCatalogServiceServicer):
         matched = [p for p in PRODUCTS_DB if q in p["name"].lower() or q in p["description"].lower() or any(q in c.lower() for c in p["cat"])]
         return stylehub_pb2.SearchProductsResponse(results=[_to_pb_product(p) for p in matched])
 
-grpc_server = None
-
-@app.on_event("startup")
-def startup_event():
-    global grpc_server
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     grpc_server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
     stylehub_pb2_grpc.add_ProductCatalogServiceServicer_to_server(ProductCatalogServicer(), grpc_server)
     grpc_port = int(os.getenv("GRPC_PORT", "50051"))
     grpc_server.add_insecure_port(f"[::]:{grpc_port}")
     grpc_server.start()
     print(f"⚡ ProductCatalog gRPC server active on port {grpc_port}")
+    yield
+    grpc_server.stop(grace=None)
 
-@app.on_event("shutdown")
-def shutdown_event():
-    if grpc_server: grpc_server.stop(grace=None)
+app = FastAPI(title="StyleHub Product Catalog Service", lifespan=lifespan)
 
 @app.get("/healthz")
 def health_check():
