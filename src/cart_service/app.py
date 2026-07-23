@@ -1,6 +1,6 @@
 """
 StyleHub - Cart Service
-gRPC Microservice managing user shopping carts backed by Redis
+gRPC Microservice managing user shopping carts backed by Redis with item removal & quantity management
 """
 
 from fastapi import FastAPI
@@ -58,6 +58,28 @@ class CartServicer(stylehub_pb2_grpc.CartServiceServicer):
         if not found:
             items.append({"product_id": request.item.product_id, "quantity": request.item.quantity})
         _save_cart(user_id, items)
+        return stylehub_pb2.Empty()
+
+    def RemoveItem(self, request, context):
+        user_id = request.user_id
+        items = _get_cart(user_id)
+        filtered = [i for i in items if i["product_id"] != request.product_id]
+        _save_cart(user_id, filtered)
+        logger.info(f"🛒 Item {request.product_id} removed from cart for user {user_id}")
+        return stylehub_pb2.Empty()
+
+    def UpdateItemQuantity(self, request, context):
+        user_id = request.user_id
+        items = _get_cart(user_id)
+        if request.quantity <= 0:
+            filtered = [i for i in items if i["product_id"] != request.product_id]
+            _save_cart(user_id, filtered)
+        else:
+            for i in items:
+                if i["product_id"] == request.product_id:
+                    i["quantity"] = request.quantity
+                    break
+            _save_cart(user_id, items)
         return stylehub_pb2.Empty()
 
     def GetCart(self, request, context):

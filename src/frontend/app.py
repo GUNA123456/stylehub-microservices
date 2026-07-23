@@ -1,13 +1,13 @@
 """
-StyleHub - Modern E-Commerce Storefront & SRE Operations Gateway
-Custom Python FastAPI Web App serving the StyleHub store interface with gRPC backend integration.
-Features: Search, Category Filters, Product Details + Quantity Selector, gRPC Recommendations,
-Full Shipping Address & Payment Forms, Order Receipt, AI Assistant, and Live System Topology Dashboard (/system-status).
+StyleHub - Storefront Web App Gateway
+Python FastAPI Storefront communicating with backend microservices via native gRPC.
+Features Search, Category Filters, Product Details + Quantity Selector, gRPC Recommendations,
+Cart Item Removal, Quantity Increments/Decrements, Shipping & Payment Checkout Forms.
 """
 
-from fastapi import FastAPI, Request, Form, Response, Cookie
+from fastapi import FastAPI, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-import os, sys, logging, time, grpc
+import os, sys, logging, grpc
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from genproto import stylehub_pb2, stylehub_pb2_grpc
@@ -25,21 +25,6 @@ RECOMMENDATION_GRPC = os.getenv("RECOMMENDATION_GRPC_ADDR", "localhost:50054")
 SHIPPING_GRPC = os.getenv("SHIPPING_GRPC_ADDR", "localhost:50055")
 CHECKOUT_GRPC = os.getenv("CHECKOUT_GRPC_ADDR", "localhost:50056")
 AD_GRPC = os.getenv("AD_GRPC_ADDR", "localhost:50057")
-EMAIL_GRPC = os.getenv("EMAIL_GRPC_ADDR", "localhost:50058")
-PAYMENT_GRPC = os.getenv("PAYMENT_GRPC_ADDR", "localhost:50059")
-
-ALL_SERVICES_CONFIG = [
-    ("Frontend Storefront", "frontend", 8080, None),
-    ("Product Catalog Service", "product-catalog-service", 8081, PRODUCT_CATALOG_GRPC),
-    ("Cart Service", "cart-service", 8082, CART_GRPC),
-    ("Currency Service", "currency-service", 8083, CURRENCY_GRPC),
-    ("Recommendation Service", "recommendation-service", 8084, RECOMMENDATION_GRPC),
-    ("Shipping Service", "shipping-service", 8085, SHIPPING_GRPC),
-    ("Checkout Orchestrator", "checkout-service", 8086, CHECKOUT_GRPC),
-    ("Ad Service", "ad-service", 8087, AD_GRPC),
-    ("Email Service", "email-service", 8088, EMAIL_GRPC),
-    ("Payment Service (Python)", "payment-service", 8089, PAYMENT_GRPC),
-]
 
 TOP_TICKER = """
 <div style="background: linear-gradient(90deg, #ea580c, #f97316); color: white; text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
@@ -50,7 +35,6 @@ TOP_TICKER = """
 FOOTER_HTML = """
 <footer style="background:#f8fafc; color:#64748b; text-align:center; padding:2.5rem 1rem; margin-top:4rem; border-top:1px solid #e2e8f0; font-size:0.9rem;">
     <p>© 2026 StyleHub Microservices | Built with gRPC, Python FastAPI, Docker & Kubernetes</p>
-    <p style="margin-top:0.4rem;"><a href="/system-status" style="color:#ea580c; font-weight:700; text-decoration:none;">📊 View Live System Topology & Microservices Health Dashboard</a></p>
 </footer>
 """
 
@@ -77,6 +61,10 @@ HTML_LAYOUT = """
         .btn:hover {{ background: #c2410c; }}
         .btn-outline {{ background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; }}
         .btn-outline:hover {{ background: #e2e8f0; }}
+        .btn-danger {{ background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 0.35rem 0.75rem; border-radius: 0.4rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; }}
+        .btn-danger:hover {{ background: #fecaca; }}
+        .qty-btn {{ background: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; width: 28px; height: 28px; border-radius: 0.25rem; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+        .qty-btn:hover {{ background: #e2e8f0; }}
         .container {{ max-width: 1200px; margin: 2rem auto; padding: 0 1.5rem; flex: 1; width: 100%; }}
         .product-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.75rem; margin-top: 1.5rem; }}
         .card {{ background: white; border-radius: 0.75rem; padding: 1.5rem; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); transition: transform 0.2s, box-shadow 0.2s; display: flex; flex-direction: column; justify-content: space-between; }}
@@ -110,7 +98,6 @@ HTML_LAYOUT = """
                         <option value="INR" {inr_sel}>🇮🇳 INR</option>
                     </select>
                 </form>
-                <a href="/assistant" class="btn btn-outline" style="background:#EEF2FF; color:#4F46E5; border-color:#C7D2FE;">🪄 AI Assistant</a>
                 <a href="/cart" class="btn btn-outline">🛒 Cart <span style="background:#ea580c; color:white; font-size:0.75rem; padding:0.1rem 0.4rem; border-radius:9999px; margin-left:0.2rem;">{cart_count}</span></a>
             </div>
         </div>
@@ -260,7 +247,6 @@ def product_detail_page(product_id: str, request: Request):
     user_currency = request.cookies.get("user_currency", "USD")
     cart_count = _get_cart_count()
 
-    # 1. Fetch product via gRPC
     try:
         stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
         product = stub.GetProduct(stylehub_pb2.GetProductRequest(id=product_id), timeout=2)
@@ -269,7 +255,7 @@ def product_detail_page(product_id: str, request: Request):
 
     price_str = _convert_price(product.price_usd.units, product.price_usd.nanos, user_currency)
 
-    # 2. Fetch gRPC Recommendations ("You May Also Like")
+    # Recommendations
     recommended_cards = ""
     try:
         rec_stub = stylehub_pb2_grpc.RecommendationServiceStub(grpc.insecure_channel(RECOMMENDATION_GRPC))
@@ -343,6 +329,32 @@ def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: s
         logger.error(f"gRPC Cart AddItem error: {e}")
     return RedirectResponse(url="/cart", status_code=303)
 
+@app.post("/cart/remove-item")
+def remove_cart_item(product_id: str = Form(...), user_id: str = "user-demo-123"):
+    try:
+        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
+        stub.RemoveItem(stylehub_pb2.RemoveItemRequest(user_id=user_id, product_id=product_id), timeout=2)
+    except Exception as e:
+        logger.error(f"gRPC Cart RemoveItem error: {e}")
+    return RedirectResponse(url="/cart", status_code=303)
+
+@app.post("/cart/update-quantity")
+def update_cart_quantity(product_id: str = Form(...), action: str = Form(...), user_id: str = "user-demo-123"):
+    try:
+        cart_items = _get_cart_items(user_id)
+        current_qty = 1
+        for item in cart_items:
+            if item.product_id == product_id:
+                current_qty = item.quantity
+                break
+        
+        new_qty = current_qty + 1 if action == "increase" else current_qty - 1
+        stub = stylehub_pb2_grpc.CartServiceStub(grpc.insecure_channel(CART_GRPC))
+        stub.UpdateItemQuantity(stylehub_pb2.UpdateItemQuantityRequest(user_id=user_id, product_id=product_id, quantity=new_qty), timeout=2)
+    except Exception as e:
+        logger.error(f"gRPC Cart UpdateItemQuantity error: {e}")
+    return RedirectResponse(url="/cart", status_code=303)
+
 @app.get("/cart", response_class=HTMLResponse)
 def view_cart(request: Request, user_id: str = "user-demo-123"):
     user_currency = request.cookies.get("user_currency", "USD")
@@ -350,7 +362,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
     cart_count = sum(i.quantity for i in cart_items)
 
     if not cart_items:
-        content = '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
+        content = '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Shopping Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
     else:
         rows, subtotal_usd = "", 0
         pc_stub = stylehub_pb2_grpc.ProductCatalogServiceStub(grpc.insecure_channel(PRODUCT_CATALOG_GRPC))
@@ -371,15 +383,35 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
             <tr style="border-bottom:1px solid #e2e8f0;">
                 <td style="padding:1rem;">
                     <span class="sku-tag">SKU #{p_sku}</span>
-                    <div style="font-weight:700; font-size:1.05rem;">{p_name}</div>
+                    <div style="font-weight:700; font-size:1.05rem;"><a href="/product/{p_sku}" style="color:#0f172a; text-decoration:none;">{p_name}</a></div>
                 </td>
                 <td style="padding:1rem; color:#64748b;">{price_formatted}</td>
-                <td style="padding:1rem; font-weight:700;">{item.quantity}</td>
+                <td style="padding:1rem;">
+                    <div style="display:flex; align-items:center; gap:0.4rem;">
+                        <form action="/cart/update-quantity" method="post" style="margin:0;">
+                            <input type="hidden" name="product_id" value="{p_sku}">
+                            <input type="hidden" name="action" value="decrease">
+                            <button type="submit" class="qty-btn">-</button>
+                        </form>
+                        <span style="font-weight:700; min-width:24px; text-align:center;">{item.quantity}</span>
+                        <form action="/cart/update-quantity" method="post" style="margin:0;">
+                            <input type="hidden" name="product_id" value="{p_sku}">
+                            <input type="hidden" name="action" value="increase">
+                            <button type="submit" class="qty-btn">+</button>
+                        </form>
+                    </div>
+                </td>
                 <td style="padding:1rem; font-weight:800; color:#ea580c;">{subtotal_formatted}</td>
+                <td style="padding:1rem; text-align:right;">
+                    <form action="/cart/remove-item" method="post" style="margin:0;">
+                        <input type="hidden" name="product_id" value="{p_sku}">
+                        <button type="submit" class="btn-danger">🗑️ Remove</button>
+                    </form>
+                </td>
             </tr>
             """
 
-        # Calculate Shipping Cost via gRPC ShippingService
+        # Dynamic Shipping Quote via gRPC
         shipping_usd = 12.00
         try:
             ship_stub = stylehub_pb2_grpc.ShippingServiceStub(grpc.insecure_channel(SHIPPING_GRPC))
@@ -401,15 +433,16 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                         <tr style="border-bottom:2px solid #e2e8f0; color:#64748b; font-size:0.85rem;">
                             <th style="padding:0.75rem;">Product</th>
                             <th style="padding:0.75rem;">Price</th>
-                            <th style="padding:0.75rem;">Qty</th>
+                            <th style="padding:0.75rem;">Quantity</th>
                             <th style="padding:0.75rem;">Subtotal</th>
+                            <th style="padding:0.75rem; text-align:right;">Action</th>
                         </tr>
                     </thead>
                     <tbody>{rows}</tbody>
                 </table>
                 <div style="display:flex; justify-content:space-between; margin-top:1rem;">
                     <form action="/empty-cart" method="post" style="margin:0;">
-                        <button type="submit" class="btn btn-outline" style="font-size:0.85rem;">Empty Cart</button>
+                        <button type="submit" class="btn btn-outline" style="font-size:0.85rem;">Empty Entire Cart</button>
                     </form>
                     <a href="/" class="btn btn-outline" style="font-size:0.85rem;">Continue Shopping</a>
                 </div>
@@ -423,7 +456,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                     <!-- Shipping Address Section -->
                     <div style="margin-bottom:1.25rem;">
                         <h4 style="font-size:0.9rem; font-weight:700; color:#475569; margin-bottom:0.5rem;">Shipping Address</h4>
-                        <input type="email" name="email" value="customer@stylehub.com" placeholder="Email Address" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
+                        <input type="email" name="email" value="someone@example.com" placeholder="Email Address" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
                         <input type="text" name="street_address" value="1600 Amphitheatre Parkway" placeholder="Street Address" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
                         <div style="display:flex; gap:0.4rem;">
                             <input type="text" name="city" value="Mountain View" placeholder="City" required style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
@@ -438,8 +471,8 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                         <input type="text" name="credit_card_number" value="4432-8015-6152-0454" placeholder="Credit Card Number" required style="width:100%; padding:0.5rem; margin-bottom:0.4rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem; font-family:monospace;">
                         <div style="display:flex; gap:0.4rem;">
                             <select name="exp_month" style="flex:1; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
-                                <option value="1">01 - January</option>
-                                <option value="12" selected>12 - December</option>
+                                <option value="1" selected>01 - January</option>
+                                <option value="12">12 - December</option>
                             </select>
                             <select name="exp_year" style="width:90px; padding:0.5rem; border:1px solid #cbd5e1; border-radius:0.4rem; font-size:0.85rem;">
                                 <option value="2026">2026</option>
@@ -452,11 +485,11 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                     <!-- Order Summary Calculation -->
                     <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1rem; margin-bottom:1.5rem;">
                         <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.3rem;">
-                            <span style="color:#64748b;">Cart Subtotal:</span>
+                            <span style="color:#64748b;">Subtotal:</span>
                             <span>{_convert_price(subtotal_usd, 0, user_currency)}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.5rem;">
-                            <span style="color:#64748b;">Shipping Cost (gRPC):</span>
+                            <span style="color:#64748b;">Shipping (gRPC):</span>
                             <span>{shipping_formatted}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:1.25rem; font-weight:800; color:#ea580c; border-top:1px solid #cbd5e1; padding-top:0.5rem;">
@@ -493,7 +526,7 @@ def empty_cart(user_id: str = "user-demo-123"):
 @app.post("/checkout", response_class=HTMLResponse)
 def checkout(
     request: Request,
-    email: str = Form("customer@stylehub.com"),
+    email: str = Form("someone@example.com"),
     street_address: str = Form("1600 Amphitheatre Parkway"),
     city: str = Form("Mountain View"),
     state: str = Form("CA"),
@@ -539,100 +572,6 @@ def checkout(
     </div>
     """
     return HTML_LAYOUT.format(title="Order Complete", ad_banner="", content=content, cart_count=0, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
-
-# -------------------------------------------------------------------
-# SRE Observability & System Status Dashboard (/system-status)
-# -------------------------------------------------------------------
-
-@app.get("/system-status", response_class=HTMLResponse)
-def system_status_dashboard():
-    service_cards = ""
-    for name, key, port, grpc_addr in ALL_SERVICES_CONFIG:
-        status_badge = '<span style="background:#dcfce7; color:#15803d; padding:0.25rem 0.5rem; border-radius:0.25rem; font-weight:700; font-size:0.75rem;">SERVING</span>'
-        latency_str = "< 5ms"
-        
-        # Test gRPC or HTTP probe
-        if grpc_addr:
-            start_t = time.time()
-            try:
-                # Ping channel
-                channel = grpc.insecure_channel(grpc_addr)
-                grpc.channel_ready_future(channel).result(timeout=1)
-                latency_str = f"{int((time.time() - start_t)*1000)}ms"
-            except Exception:
-                status_badge = '<span style="background:#fee2e2; color:#b91c1c; padding:0.25rem 0.5rem; border-radius:0.25rem; font-weight:700; font-size:0.75rem;">UNREACHABLE</span>'
-                latency_str = "TIMEOUT"
-
-        service_cards += f"""
-        <div style="background:white; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-                <h4 style="font-size:1.05rem; font-weight:700;">{name}</h4>
-                <div style="font-size:0.8rem; color:#64748b; font-family:monospace; margin-top:0.2rem;">HTTP :{port} | gRPC {grpc_addr or 'N/A'}</div>
-            </div>
-            <div style="text-align:right;">
-                <div>{status_badge}</div>
-                <div style="font-size:0.8rem; font-weight:700; color:#475569; margin-top:0.3rem;">Latency: {latency_str}</div>
-            </div>
-        </div>
-        """
-
-    content = f"""
-    <div style="margin-bottom:2rem;">
-        <h1 style="font-size:2rem; font-weight:800;">📊 Live System Topology & Microservices Health Dashboard</h1>
-        <p style="color:#64748b; margin-top:0.4rem;">Real-time gRPC health status and telemetry latency monitoring for Chaos Mesh experimentation.</p>
-    </div>
-
-    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:1.25rem;">
-        {service_cards}
-    </div>
-    """
-
-    return HTML_LAYOUT.format(title="System Status", ad_banner="", content=content, cart_count=_get_cart_count(), search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
-
-@app.get("/assistant", response_class=HTMLResponse)
-def ai_assistant_page(request: Request):
-    user_currency = request.cookies.get("user_currency", "USD")
-    cart_count = _get_cart_count()
-
-    content = """
-    <div style="max-width:700px; margin:0 auto;">
-        <h1 style="font-size:1.8rem; font-weight:800; margin-bottom:0.5rem;">🪄 StyleHub AI Shopping Assistant</h1>
-        <p style="color:#64748b; margin-bottom:1.5rem;">Ask for fashion recommendations or size guidance powered by GEMS AI.</p>
-        
-        <div style="background:white; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.5rem; min-height:300px; display:flex; flex-direction:column; justify-content:space-between;">
-            <div id="chat-box" style="color:#334155; line-height:1.6;">
-                <div style="background:#f1f5f9; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block; margin-bottom:1rem;">
-                    👋 Hello! I'm your StyleHub AI Assistant. Looking for casual streetwear or formal outfit suggestions?
-                </div>
-            </div>
-            
-            <form id="assistant-form" style="display:flex; gap:0.75rem; margin-top:1.5rem;" onsubmit="sendMessage(event)">
-                <input type="text" id="user-input" placeholder="e.g. Recommend a jacket for cool weather..." style="flex:1; border:1px solid #cbd5e1; padding:0.75rem; border-radius:0.5rem; font-size:0.9rem;" required>
-                <button type="submit" class="btn" style="width:auto; padding:0.75rem 1.5rem; background:#4f46e5;">Send</button>
-            </form>
-        </div>
-    </div>
-
-    <script>
-    function sendMessage(e) {
-        e.preventDefault();
-        const input = document.getElementById('user-input');
-        const chatBox = document.getElementById('chat-box');
-        const text = input.value.trim();
-        if(!text) return;
-
-        chatBox.innerHTML += `<div style="text-align:right; margin-bottom:1rem;"><div style="background:#4f46e5; color:white; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block;">${text}</div></div>`;
-        input.value = '';
-
-        setTimeout(() => {
-            chatBox.innerHTML += `<div style="margin-bottom:1rem;"><div style="background:#f1f5f9; padding:0.75rem 1rem; border-radius:0.5rem; display:inline-block;">✨ Based on our catalog (via gRPC ProductCatalogService), I highly recommend the <strong>Vintage Denim Jacket (SH-001)</strong> or the <strong>Urban Streetwear Hoodie (SH-002)</strong>!</div></div>`;
-            chatBox.scrollTop = chatBox.scrollHeight;
-        }, 600);
-    }
-    </script>
-    """
-
-    return HTML_LAYOUT.format(title="AI Assistant", ad_banner="", content=content, cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
 if __name__ == "__main__":
     import uvicorn

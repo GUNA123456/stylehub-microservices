@@ -11,6 +11,8 @@ service CartService {
     rpc AddItem(AddItemRequest) returns (Empty) {}
     rpc GetCart(GetCartRequest) returns (Cart) {}
     rpc EmptyCart(EmptyCartRequest) returns (Empty) {}
+    rpc RemoveItem(RemoveItemRequest) returns (Empty) {}
+    rpc UpdateItemQuantity(UpdateItemQuantityRequest) returns (Empty) {}
 }
 
 message CartItem {
@@ -21,6 +23,17 @@ message CartItem {
 message AddItemRequest {
     string user_id = 1;
     CartItem item = 2;
+}
+
+message RemoveItemRequest {
+    string user_id = 1;
+    string product_id = 2;
+}
+
+message UpdateItemQuantityRequest {
+    string user_id = 1;
+    string product_id = 2;
+    int32 quantity = 3;
 }
 
 message EmptyCartRequest {

@@ -52,6 +52,16 @@ class CartServiceStub(object):
                 request_serializer=stylehub__pb2.EmptyCartRequest.SerializeToString,
                 response_deserializer=stylehub__pb2.Empty.FromString,
                 _registered_method=True)
+        self.RemoveItem = channel.unary_unary(
+                '/stylehub.CartService/RemoveItem',
+                request_serializer=stylehub__pb2.RemoveItemRequest.SerializeToString,
+                response_deserializer=stylehub__pb2.Empty.FromString,
+                _registered_method=True)
+        self.UpdateItemQuantity = channel.unary_unary(
+                '/stylehub.CartService/UpdateItemQuantity',
+                request_serializer=stylehub__pb2.UpdateItemQuantityRequest.SerializeToString,
+                response_deserializer=stylehub__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class CartServiceServicer(object):
@@ -78,6 +88,18 @@ class CartServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RemoveItem(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateItemQuantity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CartServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -94,6 +116,16 @@ def add_CartServiceServicer_to_server(servicer, server):
             'EmptyCart': grpc.unary_unary_rpc_method_handler(
                     servicer.EmptyCart,
                     request_deserializer=stylehub__pb2.EmptyCartRequest.FromString,
+                    response_serializer=stylehub__pb2.Empty.SerializeToString,
+            ),
+            'RemoveItem': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveItem,
+                    request_deserializer=stylehub__pb2.RemoveItemRequest.FromString,
+                    response_serializer=stylehub__pb2.Empty.SerializeToString,
+            ),
+            'UpdateItemQuantity': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateItemQuantity,
+                    request_deserializer=stylehub__pb2.UpdateItemQuantityRequest.FromString,
                     response_serializer=stylehub__pb2.Empty.SerializeToString,
             ),
     }
@@ -180,6 +212,60 @@ class CartService(object):
             target,
             '/stylehub.CartService/EmptyCart',
             stylehub__pb2.EmptyCartRequest.SerializeToString,
+            stylehub__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RemoveItem(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stylehub.CartService/RemoveItem',
+            stylehub__pb2.RemoveItemRequest.SerializeToString,
+            stylehub__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateItemQuantity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/stylehub.CartService/UpdateItemQuantity',
+            stylehub__pb2.UpdateItemQuantityRequest.SerializeToString,
             stylehub__pb2.Empty.FromString,
             options,
             channel_credentials,
