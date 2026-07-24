@@ -11,17 +11,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - PRODUCT_CATALOG_SERVICE_URL=http://product-catalog-service:8081
-      - CART_SERVICE_URL=http://cart-service:8082
-      - CURRENCY_SERVICE_URL=http://currency-service:8083
-      - RECOMMENDATION_SERVICE_URL=http://recommendation-service:8084
-      - AD_SERVICE_URL=http://ad-service:8087
-      - CHECKOUT_SERVICE_URL=http://checkout-service:8086
-      - PRODUCT_CATALOG_GRPC_ADDR=product-catalog-service:50051
-      - CART_GRPC_ADDR=cart-service:50052
-      - CURRENCY_GRPC_ADDR=currency-service:50053
-      - RECOMMENDATION_GRPC_ADDR=recommendation-service:50054
-      - AD_GRPC_ADDR=ad-service:50057
+      - PRODUCT_CATALOG_URL=http://product-catalog-service:8081
+      - CART_URL=http://cart-service:8082
+      - CURRENCY_URL=http://currency-service:8083
+      - RECOMMENDATION_URL=http://recommendation-service:8084
+      - AD_URL=http://ad-service:8087
+      - CHECKOUT_URL=http://checkout-service:8086
+    depends_on:
+      - product-catalog-service
+      - cart-service
 
   product-catalog-service:
     build:
@@ -29,9 +27,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8081:8081"
-      - "50051:50051"
-    environment:
-      - GRPC_PORT=50051
 
   cart-service:
     build:
@@ -39,11 +34,9 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8082:8082"
-      - "50052:50052"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - GRPC_PORT=50052
     depends_on:
       - redis
 
@@ -53,9 +46,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8083:8083"
-      - "50053:50053"
-    environment:
-      - GRPC_PORT=50053
 
   recommendation-service:
     build:
@@ -63,9 +53,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8084:8084"
-      - "50054:50054"
-    environment:
-      - GRPC_PORT=50054
 
   shipping-service:
     build:
@@ -73,9 +60,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8085:8085"
-      - "50055:50055"
-    environment:
-      - GRPC_PORT=50055
 
   checkout-service:
     build:
@@ -83,14 +67,12 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8086:8086"
-      - "50056:50056"
     environment:
-      - CART_SERVICE_URL=http://cart-service:8082
-      - SHIPPING_SERVICE_URL=http://shipping-service:8085
-      - PAYMENT_SERVICE_URL=http://payment-service:8089
-      - EMAIL_SERVICE_URL=http://email-service:8088
-      - PRODUCT_CATALOG_SERVICE_URL=http://product-catalog-service:8081
-      - GRPC_PORT=50056
+      - CART_SERVICE_ADDR=http://cart-service:8082
+      - SHIPPING_SERVICE_ADDR=http://shipping-service:8085
+      - PAYMENT_SERVICE_ADDR=http://payment-service:8089
+      - EMAIL_SERVICE_ADDR=http://email-service:8088
+      - PRODUCT_CATALOG_SERVICE_ADDR=http://product-catalog-service:8081
 
   ad-service:
     build:
@@ -98,9 +80,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8087:8087"
-      - "50057:50057"
-    environment:
-      - GRPC_PORT=50057
 
   email-service:
     build:
@@ -108,9 +87,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8088:8088"
-      - "50058:50058"
-    environment:
-      - GRPC_PORT=50058
 
   payment-service:
     build:
@@ -118,6 +94,3 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8089:8089"
-      - "50059:50059"
-    environment:
-      - GRPC_PORT=50059
