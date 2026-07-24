@@ -26,13 +26,13 @@ microservices:
     port: 8083
   recommendation:
     port: 8084
-  ad:
-    port: 8085
   shipping:
-    port: 8086
-  email:
-    port: 8087
-  payment:
-    port: 8088
+    port: 8085
   checkout:
+    port: 8086
+  ad:
+    port: 8087
+  email:
+    port: 8088
+  payment:
     port: 8089
