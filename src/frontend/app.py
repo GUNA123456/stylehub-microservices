@@ -542,6 +542,63 @@ def checkout(
     """
     return HTML_LAYOUT.format(title="Order Complete", ad_banner="", content=content, cart_count=0, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
+ALL_SERVICES_CONFIG = [
+    ("Frontend Storefront", "frontend", 8080, "http://localhost:8080"),
+    ("Product Catalog Service", "product-catalog-service", 8081, "http://localhost:8081"),
+    ("Cart Service", "cart-service", 8082, "http://localhost:8082"),
+    ("Currency Service", "currency-service", 8083, "http://localhost:8083"),
+    ("Recommendation Service", "recommendation-service", 8084, "http://localhost:8084"),
+    ("Shipping Service", "shipping-service", 8085, "http://localhost:8085"),
+    ("Checkout Orchestrator", "checkout-service", 8086, "http://localhost:8086"),
+    ("Ad Service", "ad-service", 8087, "http://localhost:8087"),
+    ("Email Service", "email-service", 8088, "http://localhost:8088"),
+    ("Payment Processing Service", "payment-service", 8089, "http://localhost:8089"),
+]
+
+@app.get("/system-status", response_class=HTMLResponse)
+def system_status_dashboard(request: Request):
+    user_currency = request.cookies.get("user_currency", "USD")
+    cart_count = _get_cart_count()
+
+    service_cards = ""
+    for name, key, port, url in ALL_SERVICES_CONFIG:
+        start_t = time.time()
+        try:
+            res = requests.get(f"{url}/healthz", timeout=1.5)
+            lat_ms = int((time.time() - start_t) * 1000)
+            status_badge = '<span style="background:#dcfce7; color:#15803d; padding:0.25rem 0.6rem; border-radius:0.3rem; font-weight:700; font-size:0.75rem;">🟢 SERVING</span>'
+            lat_str = f"{lat_ms} ms"
+        except Exception:
+            status_badge = '<span style="background:#fee2e2; color:#b91c1c; padding:0.25rem 0.6rem; border-radius:0.3rem; font-weight:700; font-size:0.75rem;">🔴 UNREACHABLE</span>'
+            lat_str = "TIMEOUT"
+
+        service_cards += f"""
+        <div style="background:white; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h4 style="font-size:1.05rem; font-weight:700;">{name}</h4>
+                <div style="font-size:0.8rem; color:#64748b; font-family:monospace; margin-top:0.2rem;">HTTP Endpoint: {url}</div>
+            </div>
+            <div style="text-align:right;">
+                <div>{status_badge}</div>
+                <div style="font-size:0.8rem; font-weight:700; color:#475569; margin-top:0.3rem;">Latency: {lat_str}</div>
+            </div>
+        </div>
+        """
+
+    content = f"""
+    <div style="margin-bottom:2rem;">
+        <h1 style="font-size:2rem; font-weight:800;">📊 Live System Topology & Microservices Health Dashboard</h1>
+        <p style="color:#64748b; margin-top:0.4rem;">Real-time health status, response latency, and network route monitoring across all 10 StyleHub microservices.</p>
+    </div>
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:1.25rem;">
+        {service_cards}
+    </div>
+    """
+
+    return HTML_LAYOUT.format(title="System Status", ad_banner="", content=content, cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
 if __name__ == "__main__":
     import uvicorn
+    import time
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
