@@ -20,15 +20,15 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: CART_SERVICE_URL
-              value: "http://{{ .Release.Name }}-cart-service:{{ .Values.microservices.cart.port }}"
+              value: "http://{{ .Release.Name }}-cart-service.default.svc.cluster.local:{{ .Values.microservices.cart.port }}"
             - name: SHIPPING_SERVICE_URL
-              value: "http://{{ .Release.Name }}-shipping-service:{{ .Values.microservices.shipping.port }}"
+              value: "http://{{ .Release.Name }}-shipping-service.default.svc.cluster.local:{{ .Values.microservices.shipping.port }}"
             - name: PAYMENT_SERVICE_URL
-              value: "http://{{ .Release.Name }}-payment-service:{{ .Values.microservices.payment.port }}"
+              value: "http://{{ .Release.Name }}-payment-service.default.svc.cluster.local:{{ .Values.microservices.payment.port }}"
             - name: EMAIL_SERVICE_URL
-              value: "http://{{ .Release.Name }}-email-service:{{ .Values.microservices.email.port }}"
+              value: "http://{{ .Release.Name }}-email-service.default.svc.cluster.local:{{ .Values.microservices.email.port }}"
             - name: PRODUCT_CATALOG_SERVICE_URL
-              value: "http://{{ .Release.Name }}-product-catalog-service:{{ .Values.microservices.productCatalog.port }}"
+              value: "http://{{ .Release.Name }}-product-catalog-service.default.svc.cluster.local:{{ .Values.microservices.productCatalog.port }}"
           ports:
             - containerPort: {{ .Values.microservices.checkout.port }}
 ---

@@ -17,12 +17,13 @@ logger = logging.getLogger("Frontend")
 app = FastAPI(title="StyleHub Storefront")
 
 # Microservice Endpoints
-PRODUCT_CATALOG_URL = os.getenv("PRODUCT_CATALOG_URL", "http://localhost:8081")
-CART_URL = os.getenv("CART_URL", "http://localhost:8082")
-CURRENCY_URL = os.getenv("CURRENCY_URL", "http://localhost:8083")
-RECOMMENDATION_URL = os.getenv("RECOMMENDATION_URL", "http://localhost:8084")
-SHIPPING_URL = os.getenv("SHIPPING_URL", "http://localhost:8085")
-CHECKOUT_URL = os.getenv("CHECKOUT_URL", "http://localhost:8086")
+PRODUCT_CATALOG_URL = os.getenv("PRODUCT_CATALOG_SERVICE_URL", os.getenv("PRODUCT_CATALOG_URL", "http://localhost:8081"))
+CART_URL = os.getenv("CART_SERVICE_URL", os.getenv("CART_URL", "http://localhost:8082"))
+CURRENCY_URL = os.getenv("CURRENCY_SERVICE_URL", os.getenv("CURRENCY_URL", "http://localhost:8083"))
+RECOMMENDATION_URL = os.getenv("RECOMMENDATION_SERVICE_URL", os.getenv("RECOMMENDATION_URL", "http://localhost:8084"))
+SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_URL", "http://localhost:8085"))
+CHECKOUT_URL = os.getenv("CHECKOUT_SERVICE_URL", os.getenv("CHECKOUT_URL", "http://localhost:8086"))
+AD_URL = os.getenv("AD_SERVICE_URL", os.getenv("AD_URL", "http://localhost:8087"))
 AD_URL = os.getenv("AD_URL", "http://localhost:8087")
 
 TOP_TICKER = """

@@ -14,10 +14,10 @@ logger = logging.getLogger("CheckoutService")
 
 app = FastAPI(title="StyleHub Checkout Service")
 
-CART_URL = os.getenv("CART_SERVICE_ADDR", "http://localhost:8082")
-SHIPPING_URL = os.getenv("SHIPPING_SERVICE_ADDR", "http://localhost:8085")
-PAYMENT_URL = os.getenv("PAYMENT_SERVICE_ADDR", "http://localhost:8089")
-EMAIL_URL = os.getenv("EMAIL_SERVICE_ADDR", "http://localhost:8088")
+CART_URL = os.getenv("CART_SERVICE_URL", os.getenv("CART_SERVICE_ADDR", "http://localhost:8082"))
+SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_SERVICE_ADDR", "http://localhost:8085"))
+PAYMENT_URL = os.getenv("PAYMENT_SERVICE_URL", os.getenv("PAYMENT_SERVICE_ADDR", "http://localhost:8089"))
+EMAIL_URL = os.getenv("EMAIL_SERVICE_URL", os.getenv("EMAIL_SERVICE_ADDR", "http://localhost:8088"))
 
 @app.get("/healthz")
 def health(): return {"status": "ok", "service": "checkout-service"}
