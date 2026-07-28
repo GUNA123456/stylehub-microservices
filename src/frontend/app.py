@@ -7,7 +7,13 @@ Cart Item Removal, Quantity Adjustments, Shipping & Payment Checkout Forms.
 
 from fastapi import FastAPI, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os, sys, logging, requests
+
+# Persistent HTTP session for connection pooling (cuts latency significantly)
+_session = requests.Session()
+_session.headers.update({"Connection": "keep-alive"})
+_executor = ThreadPoolExecutor(max_workers=8)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -112,10 +118,10 @@ HTML_LAYOUT = """
 </html>
 """
 
-# Helper Functions
+# Helper Functions — using session for connection pooling & 1.5s timeout
 def _get_cart_items(user_id: str = "user-demo-123") -> list:
     try:
-        res = requests.get(f"{CART_URL}/api/cart/{user_id}", timeout=2).json()
+        res = _session.get(f"{CART_URL}/api/cart/{user_id}", timeout=1.5).json()
         return res.get("items", [])
     except Exception: return []
 
@@ -124,7 +130,7 @@ def _get_cart_count(user_id: str = "user-demo-123") -> int:
 
 def _get_ads(category: str = "clothing") -> str:
     try:
-        res = requests.post(f"{AD_URL}/api/ads", json=[category], timeout=2).json()
+        res = _session.post(f"{AD_URL}/api/ads", json=[category], timeout=1.5).json()
         ads = res.get("ads", [])
         if ads: return f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
     except Exception: pass
@@ -133,7 +139,7 @@ def _get_ads(category: str = "clothing") -> str:
 def _convert_price(units: int, nanos: int, to_code: str) -> str:
     if to_code == "USD": return f"${units}.00 USD"
     try:
-        res = requests.post(f"{CURRENCY_URL}/api/currency/convert", params={"from_code": "USD", "to_code": to_code, "units": units, "nanos": nanos}, timeout=2).json()
+        res = _session.post(f"{CURRENCY_URL}/api/currency/convert", params={"from_code": "USD", "to_code": to_code, "units": units, "nanos": nanos}, timeout=1.5).json()
         return f"{res['units']} {to_code}"
     except Exception: return f"${units}.00 USD"
 
@@ -146,20 +152,35 @@ def set_currency(currency_code: str = Form(...)):
 @app.get("/", response_class=HTMLResponse)
 def index_page(request: Request, q: str = "", category: str = "all"):
     user_currency = request.cookies.get("user_currency", "USD")
-    cart_count = _get_cart_count()
-    ad_html = _get_ads(category if category != "all" else "clothing")
 
-    try:
-        if q:
-            res = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/search", params={"q": q}, timeout=2).json()
-            products = res.get("products", [])
-        else:
-            res = requests.get(f"{PRODUCT_CATALOG_URL}/api/products", timeout=2).json()
-            products = res.get("products", [])
-            if category != "all":
-                products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
-    except Exception as e:
-        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{e}</p>'
+    # ⚡ Parallelise independent service calls to cut page latency
+    catalog_url = f"{PRODUCT_CATALOG_URL}/api/products/search?q={q}" if q else f"{PRODUCT_CATALOG_URL}/api/products"
+    futures = {
+        _executor.submit(_session.get, f"{CART_URL}/api/cart/user-demo-123", timeout=1.5): "cart",
+        _executor.submit(_session.post, f"{AD_URL}/api/ads", json=[category if category != 'all' else 'clothing'], timeout=1.5): "ads",
+        _executor.submit(_session.get, catalog_url, timeout=1.5): "catalog",
+    }
+    cart_count, ad_html, products = 0, "", []
+    products_error = None
+    for future in as_completed(futures, timeout=3):
+        key = futures[future]
+        try:
+            data = future.result().json()
+            if key == "cart":
+                cart_count = sum(i.get("quantity", 1) for i in data.get("items", []))
+            elif key == "ads":
+                ads = data.get("ads", [])
+                if ads: ad_html = f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
+            elif key == "catalog":
+                products = data.get("products", [])
+                if category != "all" and not q:
+                    products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
+        except Exception as e:
+            if key == "catalog":
+                products_error = e
+
+    if products_error is not None and not products:
+        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{products_error}</p>'
         return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, search_query=q, top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
 
     cat_bar = f"""
