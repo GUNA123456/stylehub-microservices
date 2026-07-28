@@ -7,7 +7,7 @@ Cart Item Removal, Quantity Adjustments, Shipping & Payment Checkout Forms.
 
 from fastapi import FastAPI, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import os, sys, logging, requests
 
 # Persistent HTTP session for connection pooling (cuts latency significantly)
@@ -153,31 +153,35 @@ def set_currency(currency_code: str = Form(...)):
 def index_page(request: Request, q: str = "", category: str = "all"):
     user_currency = request.cookies.get("user_currency", "USD")
 
-    # ⚡ Parallelise independent service calls to cut page latency
+    # ⚡ Fire all 3 backend calls in parallel — each has its own 1.5s timeout
     catalog_url = f"{PRODUCT_CATALOG_URL}/api/products/search?q={q}" if q else f"{PRODUCT_CATALOG_URL}/api/products"
-    futures = {
-        _executor.submit(_session.get, f"{CART_URL}/api/cart/user-demo-123", timeout=1.5): "cart",
-        _executor.submit(_session.post, f"{AD_URL}/api/ads", json=[category if category != 'all' else 'clothing'], timeout=1.5): "ads",
-        _executor.submit(_session.get, catalog_url, timeout=1.5): "catalog",
-    }
-    cart_count, ad_html, products = 0, "", []
-    products_error = None
-    for future in as_completed(futures, timeout=3):
-        key = futures[future]
-        try:
-            data = future.result().json()
-            if key == "cart":
-                cart_count = sum(i.get("quantity", 1) for i in data.get("items", []))
-            elif key == "ads":
-                ads = data.get("ads", [])
-                if ads: ad_html = f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
-            elif key == "catalog":
-                products = data.get("products", [])
-                if category != "all" and not q:
-                    products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
-        except Exception as e:
-            if key == "catalog":
-                products_error = e
+    future_cart    = _executor.submit(_session.get,  f"{CART_URL}/api/cart/user-demo-123", timeout=1.5)
+    future_ads     = _executor.submit(_session.post, f"{AD_URL}/api/ads", json=[category if category != 'all' else 'clothing'], timeout=1.5)
+    future_catalog = _executor.submit(_session.get,  catalog_url, timeout=1.5)
+
+    # Gather results — individual timeouts act as safety nets, no global deadline to crash on
+    cart_count, ad_html, products, products_error = 0, "", [], None
+
+    try:
+        data = future_cart.result(timeout=2)
+        cart_count = sum(i.get("quantity", 1) for i in data.json().get("items", []))
+    except Exception:
+        pass
+
+    try:
+        data = future_ads.result(timeout=2)
+        ads = data.json().get("ads", [])
+        if ads: ad_html = f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
+    except Exception:
+        pass
+
+    try:
+        data = future_catalog.result(timeout=2)
+        products = data.json().get("products", [])
+        if category != "all" and not q:
+            products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
+    except Exception as e:
+        products_error = e
 
     if products_error is not None and not products:
         content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{products_error}</p>'
