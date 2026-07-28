@@ -4,10 +4,29 @@ Clean FastAPI Microservice orchestrating Cart, Shipping, Payment, and Email REST
 """
 
 from fastapi import FastAPI
-import os, uuid, logging, requests, sys
+from pydantic import BaseModel
+import os, uuid, logging, requests
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common.models import PlaceOrderRequest
+# Inline data models (self-contained, no shared module dependency)
+class Address(BaseModel):
+    street_address: str
+    city: str
+    state: str
+    country: str = "United States"
+    zip_code: int
+
+class CreditCardInfo(BaseModel):
+    credit_card_number: str
+    credit_card_cvv: int
+    credit_card_expiration_year: int
+    credit_card_expiration_month: int
+
+class PlaceOrderRequest(BaseModel):
+    user_id: str
+    user_currency: str = "USD"
+    email: str
+    address: Address
+    credit_card: CreditCardInfo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CheckoutService")

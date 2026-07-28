@@ -3,11 +3,23 @@ StyleHub - Cart Service
 Clean FastAPI Microservice managing user shopping carts backed by Redis
 """
 
-from fastapi import FastAPI, Body
-import os, json, logging, sys
+from fastapi import FastAPI
+from pydantic import BaseModel
+import os, json, logging
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common.models import AddItemRequest, UpdateQuantityRequest
+# Inline data models (self-contained, no shared module dependency)
+class CartItem(BaseModel):
+    product_id: str
+    quantity: int
+
+class AddItemRequest(BaseModel):
+    user_id: str
+    item: CartItem
+
+class UpdateQuantityRequest(BaseModel):
+    user_id: str
+    product_id: str
+    quantity: int
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CartService")
