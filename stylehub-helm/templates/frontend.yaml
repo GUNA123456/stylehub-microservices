@@ -45,3 +45,4 @@ spec:
   ports:
     - port: 80
       targetPort: {{ .Values.microservices.frontend.port }}
+      nodePort: {{ .Values.service.frontendNodePort }}

@@ -9,7 +9,8 @@ image:
 
 service:
   type: ClusterIP
-  frontendType: LoadBalancer
+  frontendType: NodePort
+  frontendNodePort: 30080
 
 redis:
   image: redis:7-alpine
