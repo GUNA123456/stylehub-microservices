@@ -33,4 +33,4 @@ def convert_currency(from_code: str, to_code: str, units: int, nanos: int = 0):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8083")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8083")), timeout_keep_alive=120)

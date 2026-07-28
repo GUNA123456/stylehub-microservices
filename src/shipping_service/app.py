@@ -31,4 +31,4 @@ def ship_order(address: Dict, items: List[Dict]):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8085")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8085")), timeout_keep_alive=120)

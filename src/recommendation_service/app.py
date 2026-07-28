@@ -22,4 +22,4 @@ def get_recommendations(user_id: str = "user-demo-123", product_ids: List[str] =
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8084")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8084")), timeout_keep_alive=120)

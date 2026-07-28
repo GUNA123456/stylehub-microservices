@@ -8,11 +8,34 @@ Cart Item Removal, Quantity Adjustments, Shipping & Payment Checkout Forms.
 from fastapi import FastAPI, Request, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import os, sys, logging, requests
 
-# Persistent HTTP session for connection pooling (cuts latency significantly)
+# ─────────────────────────────────────────────────────────────────────────────
+# Root cause fix: Uvicorn's default keep-alive timeout is 5s. After 5s idle,
+# the backend closes the TCP socket. Our session pool still holds a reference
+# to that dead socket. Next request → ConnectionResetError(104, 'Connection
+# reset by peer'). Fix: HTTPAdapter with connect=3 / read=3 retries so urllib3
+# detects the dead socket and transparently opens a fresh connection.
+# ─────────────────────────────────────────────────────────────────────────────
+_retry = Retry(
+    total=3,          # max total retries
+    connect=3,        # retries on new-connection failures
+    read=3,           # retries on read/reset errors (covers errno 104)
+    backoff_factor=0.1,              # 0.1s, 0.2s, 0.4s between retries
+    status_forcelist=[500, 502, 503, 504],
+    raise_on_status=False,
+)
+_adapter = HTTPAdapter(
+    max_retries=_retry,
+    pool_connections=10,   # number of host connection pools
+    pool_maxsize=20,       # connections per pool
+    pool_block=False,
+)
 _session = requests.Session()
-_session.headers.update({"Connection": "keep-alive"})
+_session.mount("http://", _adapter)
+_session.mount("https://", _adapter)
 _executor = ThreadPoolExecutor(max_workers=8)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -627,4 +650,4 @@ def system_status_dashboard(request: Request):
 if __name__ == "__main__":
     import uvicorn
     import time
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")), timeout_keep_alive=120)

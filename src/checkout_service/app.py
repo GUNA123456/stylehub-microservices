@@ -90,4 +90,4 @@ def place_order(req: PlaceOrderRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8086")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8086")), timeout_keep_alive=120)
