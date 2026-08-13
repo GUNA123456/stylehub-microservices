@@ -7,6 +7,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import os, uuid, logging, requests
 
+import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
+depgraph.install()
+
 # Inline data models (self-contained, no shared module dependency)
 class Address(BaseModel):
     street_address: str

@@ -7,6 +7,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import os, json, logging
 
+import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
+depgraph.install()
+
 # Inline data models (self-contained, no shared module dependency)
 class CartItem(BaseModel):
     product_id: str
@@ -45,6 +48,10 @@ def _get_cart(user_id: str):
     if redis_client:
         try:
             raw = redis_client.get(f"cart:{user_id}")
+            # Redis is reached over its own protocol, not HTTP, so the requests patch in
+            # depgraph.install() cannot see it. Recorded explicitly to keep the cart->redis
+            # edge in the discovered graph.
+            depgraph.record("stylehub-redis")
             return json.loads(raw) if raw else []
         except Exception: pass
     return IN_MEMORY_CARTS.get(user_id, [])
@@ -53,6 +60,7 @@ def _save_cart(user_id: str, items: list):
     if redis_client:
         try:
             redis_client.set(f"cart:{user_id}", json.dumps(items))
+            depgraph.record("stylehub-redis")
             return
         except Exception: pass
     IN_MEMORY_CARTS[user_id] = items

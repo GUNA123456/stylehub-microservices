@@ -33,6 +33,16 @@ spec:
               value: "http://{{ .Release.Name }}-ad-service.default.svc.cluster.local:{{ .Values.microservices.ad.port }}"
             - name: CHECKOUT_SERVICE_URL
               value: "http://{{ .Release.Name }}-checkout-service.default.svc.cluster.local:{{ .Values.microservices.checkout.port }}"
+            # Without this the frontend falls back to http://localhost:8085 for shipping, so the
+            # cart page's shipping quote silently fails and the frontend->shipping edge never
+            # appears in the discovered dependency graph.
+            - name: SHIPPING_SERVICE_URL
+              value: "http://{{ .Release.Name }}-shipping-service.default.svc.cluster.local:{{ .Values.microservices.shipping.port }}"
+            # depgraph.py labels every dependency edge it publishes with SERVICE_NAME. It must
+            # match NODE_MAP in extract_telemetry.py exactly; if unset, the service reports
+            # source="unknown" and its edges are dropped from the discovered topology.
+            - name: SERVICE_NAME
+              value: "{{ .Release.Name }}-frontend"
 ---
 apiVersion: v1
 kind: Service

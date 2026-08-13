@@ -12,6 +12,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import os, sys, logging, requests
 
+import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
+depgraph.install()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Root cause fix: Uvicorn's default keep-alive timeout is 5s. After 5s idle,
 # the backend closes the TCP socket. Our session pool still holds a reference
@@ -53,7 +56,6 @@ RECOMMENDATION_URL = os.getenv("RECOMMENDATION_SERVICE_URL", os.getenv("RECOMMEN
 SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_URL", "http://localhost:8085"))
 CHECKOUT_URL = os.getenv("CHECKOUT_SERVICE_URL", os.getenv("CHECKOUT_URL", "http://localhost:8086"))
 AD_URL = os.getenv("AD_SERVICE_URL", os.getenv("AD_URL", "http://localhost:8087"))
-AD_URL = os.getenv("AD_URL", "http://localhost:8087")
 
 TOP_TICKER = """
 <div style="background: linear-gradient(90deg, #ea580c, #f97316); color: white; text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
@@ -269,9 +271,18 @@ def product_detail_page(product_id: str, request: Request):
     cart_count = _get_cart_count()
 
     try:
-        product = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{product_id}", timeout=2).json()
-    except Exception:
-        return HTML_LAYOUT.format(title="Not Found", content="<h2>Product Not Found</h2>", ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+        resp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{product_id}", timeout=2)
+    except requests.exceptions.RequestException as e:
+        content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{e}</p>'
+        return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
+    if resp.status_code == 404:
+        return HTML_LAYOUT.format(title="Not Found", content=f"<h2>Product Not Found</h2><p>No product with SKU {product_id}.</p>", ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+    if resp.status_code != 200:
+        content = f'<h2 style="color:#ef4444;">Product Catalog Service Error (HTTP {resp.status_code})</h2>'
+        return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+
+    product = resp.json()
 
     p_price = product.get("price_usd", {"units": 50, "nanos": 0})
     price_str = _convert_price(p_price["units"], p_price["nanos"], user_currency)
@@ -344,17 +355,21 @@ def product_detail_page(product_id: str, request: Request):
 @app.post("/add-to-cart")
 def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: str = "user-demo-123"):
     try:
-        requests.post(f"{CART_URL}/api/cart/add", json={"user_id": user_id, "item": {"product_id": product_id, "quantity": quantity}}, timeout=2)
-    except Exception as e:
+        resp = requests.post(f"{CART_URL}/api/cart/add", json={"user_id": user_id, "item": {"product_id": product_id, "quantity": quantity}}, timeout=2)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
         logger.error(f"Cart add error: {e}")
+        return RedirectResponse(url="/cart?error=add_failed", status_code=303)
     return RedirectResponse(url="/cart", status_code=303)
 
 @app.post("/cart/remove-item")
 def remove_cart_item(product_id: str = Form(...), user_id: str = "user-demo-123"):
     try:
-        requests.delete(f"{CART_URL}/api/cart/{user_id}/item/{product_id}", timeout=2)
-    except Exception as e:
+        resp = requests.delete(f"{CART_URL}/api/cart/{user_id}/item/{product_id}", timeout=2)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
         logger.error(f"Cart remove error: {e}")
+        return RedirectResponse(url="/cart?error=remove_failed", status_code=303)
     return RedirectResponse(url="/cart", status_code=303)
 
 @app.post("/cart/update-quantity")
@@ -366,21 +381,33 @@ def update_cart_quantity(product_id: str = Form(...), action: str = Form(...), u
             if item.get("product_id") == product_id:
                 current_qty = item.get("quantity", 1)
                 break
-        
+
         new_qty = current_qty + 1 if action == "increase" else current_qty - 1
-        requests.post(f"{CART_URL}/api/cart/update-quantity", json={"user_id": user_id, "product_id": product_id, "quantity": new_qty}, timeout=2)
-    except Exception as e:
+        resp = requests.post(f"{CART_URL}/api/cart/update-quantity", json={"user_id": user_id, "product_id": product_id, "quantity": new_qty}, timeout=2)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
         logger.error(f"Cart update quantity error: {e}")
+        return RedirectResponse(url="/cart?error=update_failed", status_code=303)
     return RedirectResponse(url="/cart", status_code=303)
+
+CART_ERROR_MESSAGES = {
+    "add_failed": "Couldn't add that item to your cart — the cart service didn't respond. Please try again.",
+    "remove_failed": "Couldn't remove that item from your cart — the cart service didn't respond. Please try again.",
+    "update_failed": "Couldn't update the quantity — the cart service didn't respond. Please try again.",
+}
 
 @app.get("/cart", response_class=HTMLResponse)
 def view_cart(request: Request, user_id: str = "user-demo-123"):
     user_currency = request.cookies.get("user_currency", "USD")
     cart_items = _get_cart_items(user_id)
+    error_banner = ""
+    error_code = request.query_params.get("error")
+    if error_code in CART_ERROR_MESSAGES:
+        error_banner = f'<div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:0.85rem 1rem; border-radius:0.5rem; margin-bottom:1.25rem;">⚠️ {CART_ERROR_MESSAGES[error_code]}</div>'
     cart_count = sum(i.get("quantity", 1) for i in cart_items)
 
     if not cart_items:
-        content = '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Shopping Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
+        content = error_banner + '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Shopping Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
     else:
         rows, subtotal_usd = "", 0
         for item in cart_items:
@@ -443,6 +470,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
         total_formatted = _convert_price(total_usd, 0, user_currency)
 
         content = f"""
+        {error_banner}
         <h1 style="font-size:2rem; font-weight:800; margin-bottom:1.5rem;">Shopping Cart ({cart_count} items)</h1>
         
         <div style="display:grid; grid-template-columns: 1fr 400px; gap:2rem; align-items:start;">

@@ -23,6 +23,11 @@ spec:
               value: "{{ .Release.Name }}-redis"
             - name: REDIS_PORT
               value: "{{ .Values.redis.port }}"
+            # Required by depgraph.py — must match NODE_MAP in extract_telemetry.py, otherwise
+            # this service's edges (including cart->redis) are published as source="unknown"
+            # and dropped during topology discovery.
+            - name: SERVICE_NAME
+              value: "{{ .Release.Name }}-cart-service"
           ports:
             - containerPort: {{ .Values.microservices.cart.port }}
 ---

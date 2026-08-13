@@ -12,5 +12,5 @@ COPY . .
 ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8086
+EXPOSE 8085
 CMD ["python", "app.py"]

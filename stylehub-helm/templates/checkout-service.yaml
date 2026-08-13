@@ -29,6 +29,10 @@ spec:
               value: "http://{{ .Release.Name }}-email-service.default.svc.cluster.local:{{ .Values.microservices.email.port }}"
             - name: PRODUCT_CATALOG_SERVICE_URL
               value: "http://{{ .Release.Name }}-product-catalog-service.default.svc.cluster.local:{{ .Values.microservices.productCatalog.port }}"
+            # Required by depgraph.py — must match NODE_MAP in extract_telemetry.py, otherwise
+            # checkout's four outbound edges are published as source="unknown" and dropped.
+            - name: SERVICE_NAME
+              value: "{{ .Release.Name }}-checkout-service"
           ports:
             - containerPort: {{ .Values.microservices.checkout.port }}
 ---
