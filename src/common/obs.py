@@ -37,7 +37,8 @@ import os
 import time
 import urllib.parse
 
-from prometheus_client import Counter, Histogram, make_asgi_app
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from starlette.responses import Response
 
 logger = logging.getLogger("obs")
 
@@ -215,5 +216,10 @@ def install(app, service_name=None, dependencies=None):
             except Exception:
                 pass
 
-    app.mount("/metrics", make_asgi_app())
+    # An explicit route, not app.mount(): the ASGI mount answers only /metrics/ and 307s
+    # the bare path, which pollutes http_requests_total with "unmatched" redirect hits.
+    # A real route serves /metrics with 200 and is skipped cleanly by _SKIP_PATHS.
+    @app.get("/metrics")
+    def _metrics():
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
     logger.info(f"obs: installed for {_service_name} (metrics=/metrics, tracing={'on' if traced else 'off'})")
