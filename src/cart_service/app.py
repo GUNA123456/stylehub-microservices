@@ -46,6 +46,7 @@ import redis as redis_lib
 # recover the moment Redis returns — no restarts, no ordering requirement, no shadow
 # state that hides an outage. Local dev runs the compose Redis.
 _redis_client = None
+_redis_ok = None  # None=no operation yet, True=last op succeeded, False=last op failed
 
 def _get_redis():
     global _redis_client
@@ -61,13 +62,15 @@ def _redis_op(op):
     """Run one Redis operation with the cascade-visible failure policy: any failure is a
     503 naming redis, the connection is discarded so the next call reconnects fresh, and
     the cart->redis edge (not HTTP, invisible to the obs requests patch) is recorded."""
-    global _redis_client
+    global _redis_client, _redis_ok
     try:
         result = op(_get_redis())
+        _redis_ok = True
         obs.record_dependency("stylehub-redis")
         return result
     except Exception as e:
         _redis_client = None  # discard; next operation attempts a fresh connection
+        _redis_ok = False
         obs.record_dependency("stylehub-redis", error=True)
         logger.error(f"Redis operation failed: {type(e).__name__}: {e}")
         raise HTTPException(status_code=503, detail=f"redis unavailable: {type(e).__name__}")
@@ -81,15 +84,15 @@ def _save_cart(user_id: str, items: list):
 
 @app.get("/healthz")
 def health():
-    # Redis state is reported in the BODY but the status is always 200: /healthz feeds the
-    # liveness/readiness probes, and a cart that answers 503s during a Redis outage is
-    # exactly the observable cascade the research needs — pulling the pod out of the
-    # Service would replace those named 503s with connection refusals and hide the shape.
-    try:
-        _get_redis().ping()
-        storage = "redis"
-    except Exception:
-        storage = "redis-unavailable"
+    # Two rules, both learned the hard way:
+    #  1. NEVER do blocking dependency I/O here. An earlier version pinged Redis inline;
+    #     with Redis down the 2s connect attempt exceeded the probe's 1s default timeout,
+    #     so liveness killed a perfectly healthy pod in an endless restart loop — the
+    #     probe itself manufactured an outage. Redis state is reported from a cached flag.
+    #  2. Always return 200. A cart answering named 503s during a Redis outage IS the
+    #     observable cascade; failing readiness would pull the pod from the Service and
+    #     replace those 503s with anonymous connection refusals, hiding the shape.
+    storage = {None: "redis-unused-yet", True: "redis", False: "redis-unavailable"}[_redis_ok]
     return {"status": "ok", "service": "cart-service", "storage": storage}
 
 @app.get("/api/cart/{user_id}")

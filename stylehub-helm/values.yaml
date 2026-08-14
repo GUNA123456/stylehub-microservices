@@ -67,3 +67,4 @@ resources:
 probes:
   initialDelaySeconds: 5
   periodSeconds: 10
+  timeoutSeconds: 3

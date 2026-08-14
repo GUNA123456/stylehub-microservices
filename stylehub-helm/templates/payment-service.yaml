@@ -30,12 +30,14 @@ spec:
               port: {{ .Values.microservices.payment.port }}
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
           readinessProbe:
             httpGet:
               path: /healthz
               port: {{ .Values.microservices.payment.port }}
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
           {{- if .Values.otel.endpoint }}
           env:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
