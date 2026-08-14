@@ -14,6 +14,8 @@ app = FastAPI(title="StyleHub Recommendation Service")
 
 CATALOG_URL = os.getenv("PRODUCT_CATALOG_SERVICE_URL", "http://localhost:8081")
 
+TIMEOUT_S = float(os.getenv("HTTP_TIMEOUT_SECONDS", "2"))  # Phase 4 single timeout policy
+
 import obs  # /metrics + dependency-edge counters + optional OTel tracing
 obs.install(app, "stylehub-recommendation-service", dependencies={"product-catalog": CATALOG_URL})
 
@@ -33,7 +35,7 @@ def health(): return {"status": "ok", "service": "recommendation-service"}
 @app.post("/api/recommendations")
 def get_recommendations(user_id: str = "user-demo-123", product_ids: List[str] = []):
     try:
-        res = requests.get(f"{CATALOG_URL}/api/products", timeout=2)
+        res = requests.get(f"{CATALOG_URL}/api/products", timeout=TIMEOUT_S)
         res.raise_for_status()
         products = res.json().get("products", [])
     except requests.RequestException as e:

@@ -54,6 +54,15 @@ SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_URL", "http
 CHECKOUT_URL = os.getenv("CHECKOUT_SERVICE_URL", os.getenv("CHECKOUT_URL", "http://localhost:8086"))
 AD_URL = os.getenv("AD_SERVICE_URL", os.getenv("AD_URL", "http://localhost:8087"))
 
+# Phase 4 timeout policy: two documented tiers replace the former 1.5/2/3/5s scatter,
+# which made every cascade's latency signature an accident of whichever call site it
+# crossed. TIMEOUT_S bounds any single dependency call. ORCH_TIMEOUT_S bounds the one
+# call into the checkout orchestrator, and must exceed checkout's worst-case sequential
+# chain (~5 dependency calls) or the frontend gives up before checkout can report WHICH
+# dependency failed — turning a named 502 into an anonymous ReadTimeout.
+TIMEOUT_S = float(os.getenv("HTTP_TIMEOUT_SECONDS", "2"))
+ORCH_TIMEOUT_S = float(os.getenv("ORCHESTRATOR_TIMEOUT_SECONDS", "10"))
+
 import obs  # /metrics + dependency-edge counters + optional OTel tracing (Phase 1)
 obs.install(app, "stylehub-frontend", dependencies={
     "product-catalog": PRODUCT_CATALOG_URL, "cart": CART_URL, "currency": CURRENCY_URL,
@@ -150,7 +159,7 @@ HTML_LAYOUT = """
 # Helper Functions — using session for connection pooling & 1.5s timeout
 def _get_cart_items(user_id: str = "user-demo-123") -> list:
     try:
-        res = _session.get(f"{CART_URL}/api/cart/{user_id}", timeout=1.5).json()
+        res = _session.get(f"{CART_URL}/api/cart/{user_id}", timeout=TIMEOUT_S).json()
         return res.get("items", [])
     except Exception: return []
 
@@ -159,7 +168,7 @@ def _get_cart_count(user_id: str = "user-demo-123") -> int:
 
 def _get_ads(category: str = "clothing") -> str:
     try:
-        res = _session.post(f"{AD_URL}/api/ads", json=[category], timeout=1.5).json()
+        res = _session.post(f"{AD_URL}/api/ads", json=[category], timeout=TIMEOUT_S).json()
         ads = res.get("ads", [])
         if ads: return f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
     except Exception: pass
@@ -180,7 +189,7 @@ def _get_rates():
     if now - _rates_cache["fetched_at"] > RATES_TTL_SECONDS:
         _rates_cache["fetched_at"] = now  # even on failure: don't hammer a dead service
         try:
-            res = _session.get(f"{CURRENCY_URL}/api/currency/rates", timeout=1.5)
+            res = _session.get(f"{CURRENCY_URL}/api/currency/rates", timeout=TIMEOUT_S)
             res.raise_for_status()
             _rates_cache["rates"] = res.json().get("rates", {})
         except Exception as e:
@@ -196,6 +205,9 @@ def _convert_price(units: int, nanos: int, to_code: str) -> str:
     converted = (units + nanos / 1e9) * rates[to_code]
     return f"{int(converted)} {to_code}"
 
+@app.get("/healthz")
+def health(): return {"status": "ok", "service": "frontend"}
+
 @app.post("/set-currency")
 def set_currency(currency_code: str = Form(...)):
     res = RedirectResponse(url="/", status_code=303)
@@ -208,28 +220,28 @@ def index_page(request: Request, q: str = "", category: str = "all"):
 
     # ⚡ Fire all 3 backend calls in parallel — each has its own 1.5s timeout
     catalog_url = f"{PRODUCT_CATALOG_URL}/api/products/search?q={q}" if q else f"{PRODUCT_CATALOG_URL}/api/products"
-    future_cart    = _executor.submit(_session.get,  f"{CART_URL}/api/cart/user-demo-123", timeout=1.5)
-    future_ads     = _executor.submit(_session.post, f"{AD_URL}/api/ads", json=[category if category != 'all' else 'clothing'], timeout=1.5)
-    future_catalog = _executor.submit(_session.get,  catalog_url, timeout=1.5)
+    future_cart    = _executor.submit(_session.get,  f"{CART_URL}/api/cart/user-demo-123", timeout=TIMEOUT_S)
+    future_ads     = _executor.submit(_session.post, f"{AD_URL}/api/ads", json=[category if category != 'all' else 'clothing'], timeout=TIMEOUT_S)
+    future_catalog = _executor.submit(_session.get,  catalog_url, timeout=TIMEOUT_S)
 
     # Gather results — individual timeouts act as safety nets, no global deadline to crash on
     cart_count, ad_html, products, products_error = 0, "", [], None
 
     try:
-        data = future_cart.result(timeout=2)
+        data = future_cart.result(timeout=TIMEOUT_S + 0.5)
         cart_count = sum(i.get("quantity", 1) for i in data.json().get("items", []))
     except Exception:
         pass
 
     try:
-        data = future_ads.result(timeout=2)
+        data = future_ads.result(timeout=TIMEOUT_S + 0.5)
         ads = data.json().get("ads", [])
         if ads: ad_html = f'<div class="ad-banner">📢 {ads[0]["text"]}</div>'
     except Exception:
         pass
 
     try:
-        data = future_catalog.result(timeout=2)
+        data = future_catalog.result(timeout=TIMEOUT_S + 0.5)
         products = data.json().get("products", [])
         if category != "all" and not q:
             products = [p for p in products if category.lower() in [c.lower() for c in p.get("categories", [])]]
@@ -299,7 +311,7 @@ def product_detail_page(product_id: str, request: Request):
     cart_count = _get_cart_count()
 
     try:
-        resp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{product_id}", timeout=2)
+        resp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{product_id}", timeout=TIMEOUT_S)
     except requests.exceptions.RequestException as e:
         content = f'<h2 style="color:#ef4444;">Product Catalog Service Unreachable ({PRODUCT_CATALOG_URL})</h2><p>{e}</p>'
         return HTML_LAYOUT.format(title="Error", content=content, ad_banner="", cart_count=cart_count, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML, usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
@@ -318,10 +330,10 @@ def product_detail_page(product_id: str, request: Request):
     # Recommendations
     recommended_cards = ""
     try:
-        rec_res = requests.post(f"{RECOMMENDATION_URL}/api/recommendations", params={"user_id": "user-demo-123"}, json=[product_id], timeout=2).json()
+        rec_res = requests.post(f"{RECOMMENDATION_URL}/api/recommendations", params={"user_id": "user-demo-123"}, json=[product_id], timeout=TIMEOUT_S).json()
         for r_id in rec_res.get("product_ids", []):
             try:
-                rp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{r_id}", timeout=2).json()
+                rp = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{r_id}", timeout=TIMEOUT_S).json()
                 rp_price = rp.get("price_usd", {"units": 50, "nanos": 0})
                 r_price = _convert_price(rp_price["units"], rp_price["nanos"], user_currency)
                 recommended_cards += f"""
@@ -383,7 +395,7 @@ def product_detail_page(product_id: str, request: Request):
 @app.post("/add-to-cart")
 def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: str = "user-demo-123"):
     try:
-        resp = requests.post(f"{CART_URL}/api/cart/add", json={"user_id": user_id, "item": {"product_id": product_id, "quantity": quantity}}, timeout=2)
+        resp = requests.post(f"{CART_URL}/api/cart/add", json={"user_id": user_id, "item": {"product_id": product_id, "quantity": quantity}}, timeout=TIMEOUT_S)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         logger.error(f"Cart add error: {e}")
@@ -393,7 +405,7 @@ def add_to_cart(product_id: str = Form(...), quantity: int = Form(1), user_id: s
 @app.post("/cart/remove-item")
 def remove_cart_item(product_id: str = Form(...), user_id: str = "user-demo-123"):
     try:
-        resp = requests.delete(f"{CART_URL}/api/cart/{user_id}/item/{product_id}", timeout=2)
+        resp = requests.delete(f"{CART_URL}/api/cart/{user_id}/item/{product_id}", timeout=TIMEOUT_S)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         logger.error(f"Cart remove error: {e}")
@@ -411,7 +423,7 @@ def update_cart_quantity(product_id: str = Form(...), action: str = Form(...), u
                 break
 
         new_qty = current_qty + 1 if action == "increase" else current_qty - 1
-        resp = requests.post(f"{CART_URL}/api/cart/update-quantity", json={"user_id": user_id, "product_id": product_id, "quantity": new_qty}, timeout=2)
+        resp = requests.post(f"{CART_URL}/api/cart/update-quantity", json={"user_id": user_id, "product_id": product_id, "quantity": new_qty}, timeout=TIMEOUT_S)
         resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         logger.error(f"Cart update quantity error: {e}")
@@ -443,7 +455,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
             p_qty = item.get("quantity", 1)
             p_name, p_price = p_sku, 50
             try:
-                p = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{p_sku}", timeout=2).json()
+                p = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{p_sku}", timeout=TIMEOUT_S).json()
                 p_name = p.get("name", p_sku)
                 p_price = p.get("price_usd", {}).get("units", 50)
             except Exception: pass
@@ -488,7 +500,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
         # Dynamic Shipping Quote
         shipping_usd = 12.00
         try:
-            quote = requests.post(f"{SHIPPING_URL}/api/shipping/quote", json=cart_items, timeout=2).json()
+            quote = requests.post(f"{SHIPPING_URL}/api/shipping/quote", json=cart_items, timeout=TIMEOUT_S).json()
             cost_info = quote.get("cost_usd", {})
             shipping_usd = cost_info.get("units", 12) + (cost_info.get("nanos", 0) / 1e9)
         except Exception: pass
@@ -593,7 +605,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
 @app.post("/empty-cart")
 def empty_cart(user_id: str = "user-demo-123"):
     try:
-        requests.delete(f"{CART_URL}/api/cart/{user_id}", timeout=2)
+        requests.delete(f"{CART_URL}/api/cart/{user_id}", timeout=TIMEOUT_S)
     except Exception: pass
     return RedirectResponse(url="/cart", status_code=303)
 
@@ -643,7 +655,7 @@ def checkout(
             "email": email,
             "address": {"street_address": street_address, "city": city, "state": state, "country": "United States", "zip_code": zip_code},
             "credit_card": {"credit_card_number": credit_card_number, "credit_card_cvv": cvv, "credit_card_expiration_year": exp_year, "credit_card_expiration_month": exp_month}
-        }, timeout=5)
+        }, timeout=ORCH_TIMEOUT_S)
     except requests.RequestException as e:
         logger.error(f"Checkout unreachable: {e}")
         return _order_failed_page(502, f"checkout-service unreachable ({type(e).__name__})")
@@ -701,7 +713,7 @@ def system_status_dashboard(request: Request):
     for name, key, port, url in ALL_SERVICES_CONFIG:
         start_t = time.time()
         try:
-            res = requests.get(f"{url}/healthz", timeout=1.5)
+            res = requests.get(f"{url}/healthz", timeout=TIMEOUT_S)
             lat_ms = int((time.time() - start_t) * 1000)
             status_badge = '<span style="background:#dcfce7; color:#15803d; padding:0.25rem 0.6rem; border-radius:0.3rem; font-weight:700; font-size:0.75rem;">🟢 SERVING</span>'
             lat_str = f"{lat_ms} ms"

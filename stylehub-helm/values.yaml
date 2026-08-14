@@ -15,6 +15,12 @@ service:
 redis:
   image: redis:7-alpine
   port: 6379
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
 
 microservices:
   frontend:
@@ -42,3 +48,22 @@ microservices:
 # service exports traces there. Empty = tracing disabled; images behave identically.
 otel:
   endpoint: ""
+
+# replicaCount stays 1 DELIBERATELY (documented design decision, not an omission): a
+# single replica means a killed or degraded pod is VISIBLE as a failure instead of being
+# absorbed by siblings — the research requires observable failure, not availability.
+
+# Shared per-service resources. Requests keep the scheduler honest on a small node;
+# the MEMORY limit gives memory-stress chaos a defined failure mode (OOMKill at 256Mi)
+# instead of undefined node-level contention. CPU limits are deliberately omitted —
+# they throttle rather than fail, which blurs cascade signatures.
+resources:
+  requests:
+    cpu: 20m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+probes:
+  initialDelaySeconds: 5
+  periodSeconds: 10

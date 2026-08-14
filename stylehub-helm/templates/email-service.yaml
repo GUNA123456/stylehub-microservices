@@ -22,6 +22,20 @@ spec:
         - name: email-service
           image: "{{ .Values.image.repositoryPrefix }}/email-service:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.microservices.email.port }}
+            initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.microservices.email.port }}
+            initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.periodSeconds }}
           {{- if .Values.otel.endpoint }}
           env:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

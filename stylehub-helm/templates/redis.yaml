@@ -17,6 +17,18 @@ spec:
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.redis.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.redis.port }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
           ports:
             - containerPort: {{ .Values.redis.port }}
 ---

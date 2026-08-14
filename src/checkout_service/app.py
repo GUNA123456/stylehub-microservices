@@ -42,6 +42,8 @@ EMAIL_URL = os.getenv("EMAIL_SERVICE_URL", os.getenv("EMAIL_SERVICE_ADDR", "http
 CATALOG_URL = os.getenv("PRODUCT_CATALOG_SERVICE_URL", "http://localhost:8081")
 CURRENCY_URL = os.getenv("CURRENCY_SERVICE_URL", "http://localhost:8083")
 
+TIMEOUT_S = float(os.getenv("HTTP_TIMEOUT_SECONDS", "2"))  # Phase 4 single timeout policy
+
 import obs  # /metrics + dependency-edge counters + optional OTel tracing (Phase 1)
 obs.install(app, "stylehub-checkout-service", dependencies={
     "cart": CART_URL, "shipping": SHIPPING_URL, "payment": PAYMENT_URL, "email": EMAIL_URL,
@@ -83,7 +85,7 @@ def place_order(req: PlaceOrderRequest):
 
     # 1. Fetch Cart — CRITICAL (an order for an unknown cart is not an order)
     cart_res = _call_critical("cart-service", lambda: requests.get(
-        f"{CART_URL}/api/cart/{req.user_id}", timeout=3))
+        f"{CART_URL}/api/cart/{req.user_id}", timeout=TIMEOUT_S))
     cart_items = cart_res.json().get("items", [])
     if not cart_items:
         raise HTTPException(status_code=400, detail="cart is empty — nothing to order")
@@ -94,7 +96,7 @@ def place_order(req: PlaceOrderRequest):
     total_usd = 0.0
     for item in cart_items:
         p_res = _call_critical("product-catalog-service", lambda pid=item["product_id"]: requests.get(
-            f"{CATALOG_URL}/api/products/{pid}", timeout=3))
+            f"{CATALOG_URL}/api/products/{pid}", timeout=TIMEOUT_S))
         price = p_res.json().get("price_usd", {})
         total_usd += (price.get("units", 0) + price.get("nanos", 0) / 1e9) * item.get("quantity", 1)
 
@@ -109,7 +111,7 @@ def place_order(req: PlaceOrderRequest):
             c_res = requests.post(f"{CURRENCY_URL}/api/currency/convert",
                                   params={"from_code": "USD", "to_code": req.user_currency,
                                           "units": int(total_usd),
-                                          "nanos": int((total_usd % 1) * 1e9)}, timeout=3)
+                                          "nanos": int((total_usd % 1) * 1e9)}, timeout=TIMEOUT_S)
             c_res.raise_for_status()
             c = c_res.json()
             charge_currency, charge_units, charge_nanos = c["currency_code"], c["units"], c["nanos"]
@@ -120,7 +122,7 @@ def place_order(req: PlaceOrderRequest):
     # 4. Ship Order — CRITICAL (no shipment booked means nothing will arrive)
     ship_res = _call_critical("shipping-service", lambda: requests.post(
         f"{SHIPPING_URL}/api/shipping/ship",
-        json={"address": req.address.model_dump(), "items": cart_items}, timeout=3))
+        json={"address": req.address.model_dump(), "items": cart_items}, timeout=TIMEOUT_S))
     tracking_id = ship_res.json().get("tracking_id", f"SH-TRK-{uuid.uuid4().hex[:8].upper()}")
 
     # 5. Charge Payment — CRITICAL (an unpaid order must never report success).
@@ -128,19 +130,19 @@ def place_order(req: PlaceOrderRequest):
     _call_critical("payment-service", lambda: requests.post(
         f"{PAYMENT_URL}/api/payment/charge",
         json={"amount": {"currency_code": charge_currency, "units": charge_units, "nanos": charge_nanos},
-              "credit_card": req.credit_card.model_dump()}, timeout=3))
+              "credit_card": req.credit_card.model_dump()}, timeout=TIMEOUT_S))
 
     # 6. Email & empty cart — OPTIONAL: degrade, but visibly (counted + reported)
     email_sent = True
     try:
         requests.post(f"{EMAIL_URL}/api/email/confirmation", params={"email": req.email},
                       json={"order_id": order_id, "shipping_tracking_id": tracking_id},
-                      timeout=3).raise_for_status()
+                      timeout=TIMEOUT_S).raise_for_status()
     except requests.RequestException as e:
         email_sent = False
         logger.warning(f"optional dependency 'email-service' failed: {type(e).__name__}")
     try:
-        requests.delete(f"{CART_URL}/api/cart/{req.user_id}", timeout=3)
+        requests.delete(f"{CART_URL}/api/cart/{req.user_id}", timeout=TIMEOUT_S)
     except requests.RequestException as e:
         logger.warning(f"post-order cart empty failed: {type(e).__name__}")
 
