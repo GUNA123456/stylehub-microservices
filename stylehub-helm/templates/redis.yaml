@@ -24,11 +24,18 @@ spec:
               port: {{ .Values.redis.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
+            # Without an explicit timeout these probes default to 1s, and under
+            # redis-delay chaos the SYN-ACK alone takes ~1.6-1.85s — the probe
+            # killed a healthy redis 4 times during delay smoke tests, converting
+            # a latency fault into a restart fault (same trap as payment's ramp).
+            # 3s clears worst-case handshake delay while still catching a hang.
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
           readinessProbe:
             tcpSocket:
               port: {{ .Values.redis.port }}
             initialDelaySeconds: 2
             periodSeconds: 5
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
           ports:
             - containerPort: {{ .Values.redis.port }}
 ---
