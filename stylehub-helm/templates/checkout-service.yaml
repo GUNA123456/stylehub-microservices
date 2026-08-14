@@ -11,6 +11,10 @@ spec:
       app: {{ .Release.Name }}-checkout-service
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "{{ .Values.microservices.checkout.port }}"
       labels:
         app: {{ .Release.Name }}-checkout-service
     spec:
@@ -19,6 +23,10 @@ spec:
           image: "{{ .Values.image.repositoryPrefix }}/checkout-service:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- if .Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             - name: CART_SERVICE_URL
               value: "http://{{ .Release.Name }}-cart-service.default.svc.cluster.local:{{ .Values.microservices.cart.port }}"
             - name: SHIPPING_SERVICE_URL

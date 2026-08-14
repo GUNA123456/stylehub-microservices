@@ -12,6 +12,9 @@ logger = logging.getLogger("EmailService")
 
 app = FastAPI(title="StyleHub Email Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-email-service")
+
 @app.get("/healthz")
 def health(): return {"status": "ok", "service": "email-service"}
 

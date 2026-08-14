@@ -8,6 +8,9 @@ import os
 
 app = FastAPI(title="StyleHub Currency Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-currency-service")
+
 EXCHANGE_RATES = {"USD": 1.0, "EUR": 0.92, "GBP": 0.78, "JPY": 155.0, "CAD": 1.36, "INR": 83.5}
 
 @app.get("/healthz")

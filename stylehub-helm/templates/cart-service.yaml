@@ -11,6 +11,10 @@ spec:
       app: {{ .Release.Name }}-cart-service
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "{{ .Values.microservices.cart.port }}"
       labels:
         app: {{ .Release.Name }}-cart-service
     spec:
@@ -19,6 +23,10 @@ spec:
           image: "{{ .Values.image.repositoryPrefix }}/cart-service:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- if .Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
             - name: REDIS_HOST
               value: "{{ .Release.Name }}-redis"
             - name: REDIS_PORT

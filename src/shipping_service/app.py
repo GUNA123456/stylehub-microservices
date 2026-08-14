@@ -9,6 +9,9 @@ import os, uuid
 
 app = FastAPI(title="StyleHub Shipping Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-shipping-service")
+
 @app.get("/healthz")
 def health(): return {"status": "ok", "service": "shipping-service"}
 

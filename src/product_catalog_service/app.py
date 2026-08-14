@@ -10,6 +10,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 app = FastAPI(title="StyleHub Product Catalog Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-product-catalog-service")
+
 PRODUCTS_DB = [
     {"id": "SH-001", "name": "Vintage Denim Jacket", "description": "Classic vintage washed denim jacket with reinforced stitching.", "picture": "/static/img/products/denim-jacket.jpg", "price_usd": {"currency_code": "USD", "units": 89, "nanos": 99000000}, "categories": ["clothing", "jackets"]},
     {"id": "SH-002", "name": "Urban Streetwear Hoodie", "description": "Heavyweight organic cotton blend hoodie with relaxed fit.", "picture": "/static/img/products/streetwear-hoodie.jpg", "price_usd": {"currency_code": "USD", "units": 64, "nanos": 50000000}, "categories": ["clothing", "hoodies"]},

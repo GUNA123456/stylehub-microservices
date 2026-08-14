@@ -9,6 +9,9 @@ import os
 
 app = FastAPI(title="StyleHub Ad Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-ad-service")
+
 ADS_DB = {
     "clothing": [{"redirect_url": "/product/SH-001", "text": "🔥 Summer Sale: Up to 40% OFF Denim Jackets!"}],
     "footwear": [{"redirect_url": "/product/SH-003", "text": "👟 Premium Italian Leather Sneakers in stock."}],

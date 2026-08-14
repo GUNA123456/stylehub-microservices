@@ -9,6 +9,9 @@ import os, random
 
 app = FastAPI(title="StyleHub Recommendation Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-recommendation-service")
+
 ALL_PIDS = ["SH-001", "SH-002", "SH-003", "SH-004", "SH-005", "SH-006"]
 
 @app.get("/healthz")

@@ -12,9 +12,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import os, sys, logging, requests
 
-import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
-depgraph.install()
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Root cause fix: Uvicorn's default keep-alive timeout is 5s. After 5s idle,
 # the backend closes the TCP socket. Our session pool still holds a reference
@@ -56,6 +53,13 @@ RECOMMENDATION_URL = os.getenv("RECOMMENDATION_SERVICE_URL", os.getenv("RECOMMEN
 SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_URL", "http://localhost:8085"))
 CHECKOUT_URL = os.getenv("CHECKOUT_SERVICE_URL", os.getenv("CHECKOUT_URL", "http://localhost:8086"))
 AD_URL = os.getenv("AD_SERVICE_URL", os.getenv("AD_URL", "http://localhost:8087"))
+
+import obs  # /metrics + dependency-edge counters + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-frontend", dependencies={
+    "product-catalog": PRODUCT_CATALOG_URL, "cart": CART_URL, "currency": CURRENCY_URL,
+    "recommendation": RECOMMENDATION_URL, "shipping": SHIPPING_URL,
+    "checkout": CHECKOUT_URL, "ad": AD_URL,
+})
 
 TOP_TICKER = """
 <div style="background: linear-gradient(90deg, #ea580c, #f97316); color: white; text-align: center; padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">

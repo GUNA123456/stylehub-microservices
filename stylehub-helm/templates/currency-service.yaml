@@ -11,6 +11,10 @@ spec:
       app: {{ .Release.Name }}-currency-service
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "{{ .Values.microservices.currency.port }}"
       labels:
         app: {{ .Release.Name }}-currency-service
     spec:
@@ -18,6 +22,11 @@ spec:
         - name: currency-service
           image: "{{ .Values.image.repositoryPrefix }}/currency-service:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.otel.endpoint }}
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+          {{- end }}
           ports:
             - containerPort: {{ .Values.microservices.currency.port }}
 ---

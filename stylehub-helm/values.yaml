@@ -37,3 +37,8 @@ microservices:
     port: 8088
   payment:
     port: 8089
+
+# OpenTelemetry: when set (e.g. http://jaeger-collector.monitoring.svc:4318), every
+# service exports traces there. Empty = tracing disabled; images behave identically.
+otel:
+  endpoint: ""

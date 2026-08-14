@@ -7,9 +7,6 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import os, uuid, logging, requests
 
-import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
-depgraph.install()
-
 # Inline data models (self-contained, no shared module dependency)
 class Address(BaseModel):
     street_address: str
@@ -40,6 +37,11 @@ CART_URL = os.getenv("CART_SERVICE_URL", os.getenv("CART_SERVICE_ADDR", "http://
 SHIPPING_URL = os.getenv("SHIPPING_SERVICE_URL", os.getenv("SHIPPING_SERVICE_ADDR", "http://localhost:8085"))
 PAYMENT_URL = os.getenv("PAYMENT_SERVICE_URL", os.getenv("PAYMENT_SERVICE_ADDR", "http://localhost:8089"))
 EMAIL_URL = os.getenv("EMAIL_SERVICE_URL", os.getenv("EMAIL_SERVICE_ADDR", "http://localhost:8088"))
+
+import obs  # /metrics + dependency-edge counters + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-checkout-service", dependencies={
+    "cart": CART_URL, "shipping": SHIPPING_URL, "payment": PAYMENT_URL, "email": EMAIL_URL,
+})
 
 @app.get("/healthz")
 def health(): return {"status": "ok", "service": "checkout-service"}

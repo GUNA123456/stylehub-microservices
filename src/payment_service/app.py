@@ -12,6 +12,9 @@ logger = logging.getLogger("PaymentService")
 
 app = FastAPI(title="StyleHub Payment Service")
 
+import obs  # /metrics + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-payment-service")
+
 @app.get("/healthz")
 def health(): return {"status": "ok", "service": "payment-service"}
 

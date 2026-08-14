@@ -3,12 +3,9 @@ StyleHub - Cart Service
 Clean FastAPI Microservice managing user shopping carts backed by Redis
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os, json, logging
-
-import depgraph  # observes outbound calls so the dependency graph can be discovered, not declared
-depgraph.install()
 
 # Inline data models (self-contained, no shared module dependency)
 class CartItem(BaseModel):
@@ -32,6 +29,9 @@ app = FastAPI(title="StyleHub Cart Service")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
+import obs  # /metrics + dependency-edge counters + optional OTel tracing (Phase 1)
+obs.install(app, "stylehub-cart-service", dependencies={"redis": f"{REDIS_HOST}:{REDIS_PORT}"})
+
 redis_client = None
 IN_MEMORY_CARTS = {}
 
@@ -44,25 +44,36 @@ try:
 except Exception as e:
     logger.warning(f"⚠️ Redis unavailable ({e}). Using in-memory fallback.")
 
+# Phase 1 failure policy: Redis is cart's ONLY critical dependency. Round 1 fell back to
+# in-memory storage when Redis died mid-run, which made a Redis outage invisible in every
+# metric — the exact masking that made cascades unobservable. Now: if Redis was present at
+# startup, a runtime Redis failure is surfaced as 503 (and checkout's cart call will turn
+# it into a 502 — a real, measurable cascade chain). The in-memory fallback survives ONLY
+# for local development where Redis was never reachable to begin with.
 def _get_cart(user_id: str):
     if redis_client:
         try:
             raw = redis_client.get(f"cart:{user_id}")
-            # Redis is reached over its own protocol, not HTTP, so the requests patch in
-            # depgraph.install() cannot see it. Recorded explicitly to keep the cart->redis
-            # edge in the discovered graph.
-            depgraph.record("stylehub-redis")
+            # Redis speaks its own protocol, not HTTP, so the requests patch in obs cannot
+            # see it. Recorded explicitly to keep the cart->redis edge in the graph.
+            obs.record_dependency("stylehub-redis")
             return json.loads(raw) if raw else []
-        except Exception: pass
+        except Exception as e:
+            obs.record_dependency("stylehub-redis", error=True)
+            logger.error(f"Redis read failed: {e}")
+            raise HTTPException(status_code=503, detail=f"redis unavailable: {type(e).__name__}")
     return IN_MEMORY_CARTS.get(user_id, [])
 
 def _save_cart(user_id: str, items: list):
     if redis_client:
         try:
             redis_client.set(f"cart:{user_id}", json.dumps(items))
-            depgraph.record("stylehub-redis")
+            obs.record_dependency("stylehub-redis")
             return
-        except Exception: pass
+        except Exception as e:
+            obs.record_dependency("stylehub-redis", error=True)
+            logger.error(f"Redis write failed: {e}")
+            raise HTTPException(status_code=503, detail=f"redis unavailable: {type(e).__name__}")
     IN_MEMORY_CARTS[user_id] = items
 
 @app.get("/healthz")
