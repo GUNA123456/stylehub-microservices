@@ -588,8 +588,30 @@ def checkout(
     user_id: str = "user-demo-123"
 ):
     user_currency = request.cookies.get("user_currency", "USD")
-    order_id, tracking_id = "ORD-SH-SUCCESS", "SH-TRK-98765"
-    
+
+    # Phase 1: the failure is the product here. Round 1 rendered "Order Placed
+    # Successfully!" with invented IDs (ORD-SH-SUCCESS) even when checkout-service was
+    # completely dead — the final and worst link in the failure-masking chain. Now a
+    # checkout failure renders an error page carrying checkout's own 502 detail, so a
+    # payment-service kill is visible in the browser as
+    # "payment-service unavailable — order not placed", three hops upstream.
+    def _order_failed_page(status_code, detail):
+        content = f"""
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:0.75rem; padding:2.5rem; max-width:650px; margin:2rem auto; text-align:center;">
+            <div style="font-size:3.5rem;">🚫</div>
+            <h1 style="color:#b91c1c; font-weight:800; font-size:2rem; margin-top:0.5rem;">Order Could Not Be Placed</h1>
+            <p style="color:#991b1b; margin-top:0.4rem;">No payment was taken and no shipment was booked.</p>
+            <div style="background:white; border:1px solid #fecaca; border-radius:0.5rem; padding:1.25rem; margin-top:1.5rem; text-align:left;">
+                <p style="font-family:monospace; color:#b91c1c; margin:0;">HTTP {status_code} — {detail}</p>
+            </div>
+            <a href="/cart" class="btn" style="display:inline-block; margin-top:2rem; padding:0.8rem 2rem; background:#b91c1c;">Back to Cart</a>
+        </div>
+        """
+        page = HTML_LAYOUT.format(title="Order Failed", ad_banner="", content=content,
+                                  cart_count=0, search_query="", top_ticker=TOP_TICKER, footer=FOOTER_HTML,
+                                  usd_sel="", eur_sel="", gbp_sel="", jpy_sel="", cad_sel="", inr_sel="")
+        return HTMLResponse(content=page, status_code=status_code)
+
     try:
         res = requests.post(f"{CHECKOUT_URL}/api/checkout", json={
             "user_id": user_id,
@@ -597,12 +619,22 @@ def checkout(
             "email": email,
             "address": {"street_address": street_address, "city": city, "state": state, "country": "United States", "zip_code": zip_code},
             "credit_card": {"credit_card_number": credit_card_number, "credit_card_cvv": cvv, "credit_card_expiration_year": exp_year, "credit_card_expiration_month": exp_month}
-        }, timeout=5).json()
-        order_info = res.get("order", {})
-        order_id = order_info.get("order_id", order_id)
-        tracking_id = order_info.get("shipping_tracking_id", tracking_id)
-    except Exception as e:
-        logger.error(f"Checkout error: {e}")
+        }, timeout=5)
+    except requests.RequestException as e:
+        logger.error(f"Checkout unreachable: {e}")
+        return _order_failed_page(502, f"checkout-service unreachable ({type(e).__name__})")
+
+    if res.status_code >= 400:
+        try:
+            detail = res.json().get("detail", res.text[:200])
+        except Exception:
+            detail = res.text[:200]
+        logger.error(f"Checkout failed: HTTP {res.status_code} — {detail}")
+        return _order_failed_page(res.status_code, detail)
+
+    order_info = res.json().get("order", {})
+    order_id = order_info.get("order_id", "ORD-UNKNOWN")
+    tracking_id = order_info.get("shipping_tracking_id", "TRK-UNKNOWN")
 
     content = f"""
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:0.75rem; padding:2.5rem; max-width:650px; margin:2rem auto; text-align:center;">
