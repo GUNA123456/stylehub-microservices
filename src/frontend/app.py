@@ -450,20 +450,33 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
         content = error_banner + '<div style="text-align:center; padding:4rem 1rem;"><h2>🛒 Your Shopping Cart is Empty</h2><a href="/" class="btn" style="display:inline-block; margin-top:1.5rem; padding:0.75rem 2rem;">Explore Store Collection</a></div>'
     else:
         rows, subtotal_usd = "", 0
+        # A price the catalog can't confirm is shown as unavailable, never invented — this
+        # was the last invented-data fallback in the app (unknown SKUs rendered at $50 with
+        # the catalog down). Totals covering unpriced items are suppressed for the same
+        # reason; the order button stays live because checkout re-validates every price
+        # critically and will answer with its own 502 naming the catalog.
+        catalog_failed = False
         for item in cart_items:
             p_sku = item.get("product_id")
             p_qty = item.get("quantity", 1)
-            p_name, p_price = p_sku, 50
+            p_name, p_price = p_sku, None
             try:
-                p = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{p_sku}", timeout=TIMEOUT_S).json()
+                p_res = requests.get(f"{PRODUCT_CATALOG_URL}/api/products/{p_sku}", timeout=TIMEOUT_S)
+                p_res.raise_for_status()
+                p = p_res.json()
                 p_name = p.get("name", p_sku)
-                p_price = p.get("price_usd", {}).get("units", 50)
-            except Exception: pass
-            
-            item_total = p_price * p_qty
-            subtotal_usd += item_total
-            price_formatted = _convert_price(p_price, 0, user_currency)
-            subtotal_formatted = _convert_price(item_total, 0, user_currency)
+                p_price = p.get("price_usd", {}).get("units", 0)
+            except Exception:
+                catalog_failed = True
+
+            if p_price is None:
+                price_formatted = '<span style="color:#b91c1c;">unavailable</span>'
+                subtotal_formatted = '<span style="color:#b91c1c;">—</span>'
+            else:
+                item_total = p_price * p_qty
+                subtotal_usd += item_total
+                price_formatted = _convert_price(p_price, 0, user_currency)
+                subtotal_formatted = _convert_price(item_total, 0, user_currency)
 
             rows += f"""
             <tr style="border-bottom:1px solid #e2e8f0;">
@@ -507,7 +520,13 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
 
         total_usd = int(subtotal_usd + shipping_usd)
         shipping_formatted = _convert_price(int(shipping_usd), 0, user_currency)
-        total_formatted = _convert_price(total_usd, 0, user_currency)
+        if catalog_failed:
+            error_banner += '<div style="background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; padding:0.85rem 1rem; border-radius:0.5rem; margin-bottom:1.25rem;">⚠️ Some prices could not be loaded — product-catalog-service is unavailable. Totals are incomplete until it recovers.</div>'
+            subtotal_formatted_summary = '<span style="color:#b91c1c;">unavailable</span>'
+            total_formatted = '<span style="color:#b91c1c;">unavailable</span>'
+        else:
+            subtotal_formatted_summary = _convert_price(subtotal_usd, 0, user_currency)
+            total_formatted = _convert_price(total_usd, 0, user_currency)
 
         content = f"""
         {error_banner}
@@ -573,7 +592,7 @@ def view_cart(request: Request, user_id: str = "user-demo-123"):
                     <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:0.5rem; padding:1rem; margin-bottom:1.5rem;">
                         <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.3rem;">
                             <span style="color:#64748b;">Subtotal:</span>
-                            <span>{_convert_price(subtotal_usd, 0, user_currency)}</span>
+                            <span>{subtotal_formatted_summary}</span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:0.5rem;">
                             <span style="color:#64748b;">Shipping:</span>
