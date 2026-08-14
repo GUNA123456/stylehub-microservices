@@ -20,6 +20,13 @@ def health(): return {"status": "ok", "service": "currency-service"}
 def get_supported_currencies():
     return {"currencies": list(EXCHANGE_RATES.keys())}
 
+@app.get("/api/currency/rates")
+def get_rates():
+    """Full rate table in one response. Exists so the frontend can convert prices
+    locally instead of one HTTP round-trip per price — the N+1 pattern that put the
+    storefront's NORMAL latency at ~745 ms and made a flat latency SLO useless."""
+    return {"base": "USD", "rates": EXCHANGE_RATES}
+
 @app.post("/api/currency/convert")
 def convert_currency(from_code: str, to_code: str, units: int, nanos: int = 0):
     from_c, to_c = from_code.upper(), to_code.upper()

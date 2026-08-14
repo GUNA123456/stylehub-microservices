@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from concurrent.futures import ThreadPoolExecutor
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import os, sys, logging, requests
+import os, sys, time, logging, requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Root cause fix: Uvicorn's default keep-alive timeout is 5s. After 5s idle,
@@ -165,12 +165,36 @@ def _get_ads(category: str = "clothing") -> str:
     except Exception: pass
     return ""
 
+# N+1 fix (Phase 1): Round 1 made one HTTP call to currency-service PER PRICE rendered —
+# a homepage with N products issued N sequential conversions, putting the storefront's
+# NORMAL latency at ~745 ms against ~90 ms for every other service. That noise floor is
+# what made a flat latency SLO fire on 100% of normal traffic. Now the full rate table is
+# fetched once and cached for RATES_TTL; each price converts locally. The
+# frontend->currency edge stays alive (one call per TTL per pod), so currency-service
+# faults remain observable — at the cache boundary instead of on every price.
+RATES_TTL_SECONDS = 30.0
+_rates_cache = {"rates": None, "fetched_at": 0.0}
+
+def _get_rates():
+    now = time.time()
+    if now - _rates_cache["fetched_at"] > RATES_TTL_SECONDS:
+        _rates_cache["fetched_at"] = now  # even on failure: don't hammer a dead service
+        try:
+            res = _session.get(f"{CURRENCY_URL}/api/currency/rates", timeout=1.5)
+            res.raise_for_status()
+            _rates_cache["rates"] = res.json().get("rates", {})
+        except Exception as e:
+            logger.warning(f"currency rates refresh failed ({type(e).__name__}); serving USD")
+            _rates_cache["rates"] = None
+    return _rates_cache["rates"]
+
 def _convert_price(units: int, nanos: int, to_code: str) -> str:
     if to_code == "USD": return f"${units}.00 USD"
-    try:
-        res = _session.post(f"{CURRENCY_URL}/api/currency/convert", params={"from_code": "USD", "to_code": to_code, "units": units, "nanos": nanos}, timeout=1.5).json()
-        return f"{res['units']} {to_code}"
-    except Exception: return f"${units}.00 USD"
+    rates = _get_rates()
+    if not rates or to_code not in rates:
+        return f"${units}.00 USD"
+    converted = (units + nanos / 1e9) * rates[to_code]
+    return f"{int(converted)} {to_code}"
 
 @app.post("/set-currency")
 def set_currency(currency_code: str = Form(...)):
