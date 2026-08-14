@@ -22,11 +22,15 @@ spec:
         - name: recommendation-service
           image: "{{ .Values.image.repositoryPrefix }}/recommendation-service:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.otel.endpoint }}
           env:
+            # Phase 2: recommendation->catalog edge — recommendations now come from the
+            # live catalog, so this stub finally has (and needs) a real dependency.
+            - name: PRODUCT_CATALOG_SERVICE_URL
+              value: "http://{{ .Release.Name }}-product-catalog-service.default.svc.cluster.local:{{ .Values.microservices.productCatalog.port }}"
+            {{- if .Values.otel.endpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otel.endpoint | quote }}
-          {{- end }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.microservices.recommendation.port }}
 ---
